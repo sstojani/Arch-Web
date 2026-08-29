@@ -155,7 +155,9 @@ function loadState() {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) return structuredClone(seedState);
   try {
-    return { ...structuredClone(seedState), ...JSON.parse(stored) };
+    const normalized = normalizeStoredState({ ...structuredClone(seedState), ...JSON.parse(stored) });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+    return normalized;
   } catch {
     return structuredClone(seedState);
   }
@@ -163,13 +165,34 @@ function loadState() {
 
 function saveState() {
   try {
+    state = normalizeStoredState(state);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     applySettings();
     return true;
   } catch {
-    showToast("Upload is too large for browser storage. Try smaller images.");
+    showToast("Could not save. Try clearing old browser data from this prototype.");
     return false;
   }
+}
+
+function normalizeStoredState(input) {
+  const base = structuredClone(seedState);
+  const next = {
+    ...base,
+    ...input,
+    settings: { ...base.settings, ...(input.settings || {}) },
+    services: Array.isArray(input.services) ? input.services : base.services,
+    projects: Array.isArray(input.projects) ? input.projects : base.projects,
+    mediaItems: Array.isArray(input.mediaItems) ? input.mediaItems : []
+  };
+
+  next.projects = next.projects.map((project, index) => ({
+    ...project,
+    cover: isBrowserStoredMedia(project.cover) ? imageBank[index % imageBank.length] : project.cover,
+    media: (project.media || []).filter((src) => !isBrowserStoredMedia(src))
+  }));
+  next.mediaItems = next.mediaItems.filter((item) => item && !isBrowserStoredMedia(item.src));
+  return next;
 }
 
 function applySettings() {
@@ -241,8 +264,10 @@ function publishedProjects() {
 }
 
 function renderHome() {
-  const featured = publishedProjects().filter((project) => project.featured).slice(0, 3);
-  const heroProject = featured[0] || publishedProjects()[0] || seedState.projects[0];
+  const projects = publishedProjects();
+  const featured = projects.filter((project) => project.featured);
+  const heroProject = featured[0] || projects[0] || seedState.projects[0];
+  const storyProjects = projects.length ? projects : [heroProject];
   page(`
     <section class="hero container">
       <div class="hero-copy">
@@ -293,12 +318,12 @@ function renderHome() {
         <h2>Scroll through the project sequence.</h2>
         <div class="story-rail" aria-hidden="true"><span data-story-progress></span></div>
         <div class="story-current" aria-live="polite">
-          ${storyDetails(featured[0] || heroProject, 0, featured.length)}
+          ${storyDetails(storyProjects[0], 0, storyProjects.length)}
         </div>
         <a class="button ghost" href="#work">All Work</a>
       </aside>
       <div class="story-stack">
-        ${featured.map(projectStoryCard).join("")}
+        ${storyProjects.map((project, index) => projectStoryCard(project, index, storyProjects.length)).join("")}
       </div>
     </section>
     <section class="section container">
@@ -497,8 +522,8 @@ function projectForm(project) {
     role: "",
     area: "",
     featured: false,
-    published: false,
-    cover: imageBank[0],
+    published: true,
+    cover: "",
     summary: "",
     concept: "",
     challenge: "",
@@ -526,7 +551,7 @@ function projectForm(project) {
       ${textarea("Result", "result", data.result)}
       ${projectUploadField("Project Gallery", "media", (data.media || []).join("\\n"), true)}
       <label class="checkbox-field"><input name="featured" type="checkbox" ${data.featured ? "checked" : ""}> Featured on homepage</label>
-      <label class="checkbox-field"><input name="published" type="checkbox" ${data.published ? "checked" : ""}> Published</label>
+      <label class="checkbox-field"><input name="published" type="checkbox" ${data.published ? "checked" : ""}> Published on Work and Scroll sequence</label>
       <div class="admin-actions full">
         <button class="button accent" type="submit">Save Project</button>
         <button class="button ghost" type="button" data-cancel-edit>Cancel</button>
@@ -627,7 +652,7 @@ function bindAdmin() {
       const project = state.projects.find((item) => item.id === button.dataset.deleteProject);
       askConfirm(`Delete ${project.title}?`, "This removes the project from the local portfolio.", () => {
         state.projects = state.projects.filter((item) => item.id !== project.id);
-        saveState();
+        if (!saveState()) return;
         showToast("Project deleted.");
         renderAdmin();
       });
@@ -656,7 +681,7 @@ function bindAdmin() {
     button.addEventListener("click", () => {
       askConfirm("Delete media item?", "This removes the uploaded item from this browser.", () => {
         state.mediaItems = state.mediaItems.filter((item) => item.id !== button.dataset.deleteMedia);
-        saveState();
+        if (!saveState()) return;
         renderAdmin();
       });
     });
@@ -672,7 +697,7 @@ function bindAdmin() {
     resetSite.addEventListener("click", () => {
       askConfirm("Reset demo content?", "This will replace all local edits with the seeded portfolio.", () => {
         state = structuredClone(seedState);
-        saveState();
+        if (!saveState()) return;
         showToast("Demo content restored.");
         renderAdmin();
       });
@@ -735,18 +760,19 @@ function saveProjectFromForm(event) {
 }
 
 function handleMediaUpload(event) {
-  [...event.target.files].forEach((file) => {
-    fileToDataUrl(file).then((src) => {
+  uploadFilesToAssets([...event.target.files]).then((files) => {
+    files.forEach((file) => {
       state.mediaItems.unshift({
         id: `m-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         name: file.name,
         type: file.type,
-        src
+        src: file.path
       });
-      if (!saveState()) return;
-      renderAdmin();
-    }).catch(() => showToast("Could not read that upload."));
-  });
+    });
+    if (!saveState()) return;
+    showToast(`${files.length} media item${files.length === 1 ? "" : "s"} uploaded.`);
+    renderAdmin();
+  }).catch((error) => showToast(error.message));
 }
 
 function bindProjectUploadFields(form) {
@@ -761,13 +787,16 @@ function bindProjectUploadFields(form) {
 function handleProjectUpload(inputNode) {
   const target = document.querySelector(inputNode.dataset.projectUpload);
   if (!target || !inputNode.files.length) return;
-  const files = [...inputNode.files].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
+  const files = [...inputNode.files].filter((file) =>
+    file.type.startsWith("image/") || file.type.startsWith("video/") || file.type === "application/pdf"
+  );
   if (!files.length) {
     showToast("Please choose image or video files.");
     return;
   }
 
-  Promise.all(files.map(fileToDataUrl)).then((sources) => {
+  uploadFilesToAssets(files).then((uploaded) => {
+    const sources = uploaded.map((file) => file.path);
     if (inputNode.multiple) {
       const existing = target.value.split(/\n+/).map((item) => item.trim()).filter(Boolean);
       target.value = [...existing, ...sources].join("\n");
@@ -776,7 +805,7 @@ function handleProjectUpload(inputNode) {
     }
     syncUploadPreview(target);
     showToast(inputNode.multiple ? "Gallery media added." : "Cover image added.");
-  }).catch(() => showToast("Could not read that upload."));
+  }).catch((error) => showToast(error.message));
 }
 
 function syncUploadPreview(inputNode) {
@@ -786,37 +815,19 @@ function syncUploadPreview(inputNode) {
   preview.innerHTML = sources.slice(0, 8).map((src, index) => mediaPreview(src, index)).join("") || `<span>No media selected yet.</span>`;
 }
 
-function fileToDataUrl(file) {
-  if (file.type.startsWith("image/")) return imageFileToDataUrl(file);
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-function imageFileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const image = new Image();
-      image.onload = () => {
-        const maxSide = 1600;
-        const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(image.width * ratio));
-        canvas.height = Math.max(1, Math.round(image.height * ratio));
-        const context = canvas.getContext("2d");
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", 0.86));
-      };
-      image.onerror = reject;
-      image.src = reader.result;
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
+async function uploadFilesToAssets(files) {
+  if (!files.length) return [];
+  const body = new FormData();
+  files.forEach((file) => body.append("files", file));
+  const response = await fetch("/api/upload", { method: "POST", body });
+  if (!response.ok) {
+    throw new Error("Start the Node server to save uploads into assets.");
+  }
+  const data = await response.json();
+  if (!data.files || !data.files.length) {
+    throw new Error("No supported media files were uploaded.");
+  }
+  return data.files;
 }
 
 function saveContent(event) {
@@ -832,7 +843,7 @@ function saveContent(event) {
       return { title: title.trim(), text: rest.join("|").trim() };
     })
     .filter((item) => item.title && item.text);
-  saveState();
+  if (!saveState()) return;
   showToast("Content saved.");
 }
 
@@ -842,7 +853,7 @@ function saveSettings(event) {
   ["siteName", "contactEmail", "phone", "instagram", "linkedin", "accent", "navWork", "navAbout", "navContact", "seoTitle", "seoDescription"].forEach((key) => {
     state.settings[key] = String(form.get(key) || "");
   });
-  saveState();
+  if (!saveState()) return;
   showToast("Settings saved.");
   renderAdmin();
 }
@@ -853,17 +864,18 @@ function moveProject(id, direction) {
   if (target < 0 || target >= state.projects.length) return;
   const [project] = state.projects.splice(index, 1);
   state.projects.splice(target, 0, project);
-  saveState();
+  if (!saveState()) return;
   renderAdmin();
 }
 
 function projectCard(project, index = 0) {
   const size = index % 3 === 0 ? "wide" : index % 3 === 1 ? "narrow" : "";
   const images = projectImages(project);
+  const carouselAttr = images.length > 1 ? " data-carousel" : "";
   return `
     <a class="project-card ${size}" href="#project/${project.slug}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
-      <figure class="project-cover" data-carousel>
-        ${images.map((src, imageIndex) => `<img class="carousel-image ${imageIndex === 0 ? "active" : ""}" src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} project thumbnail ${imageIndex + 1}" loading="lazy">`).join("")}
+      <figure class="project-cover ${images.length ? "" : "is-placeholder-only"}"${carouselAttr}>
+        ${projectImageMarkup(project, images)}
       </figure>
       <div class="project-meta">
         <div>
@@ -880,17 +892,18 @@ function projectCard(project, index = 0) {
   `;
 }
 
-function projectStoryCard(project, index) {
+function projectStoryCard(project, index, total) {
   const images = projectImages(project);
+  const carouselAttr = images.length > 1 ? " data-carousel" : "";
   return `
-    <a class="project-card story-card ${index === 0 ? "active" : ""}" href="#project/${project.slug}" data-story-card data-index="${index}" data-total="${publishedProjects().filter((item) => item.featured).slice(0, 3).length}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
-      <figure class="project-cover cinematic-cover" data-carousel>
+    <a class="project-card story-card ${index === 0 ? "active" : ""}" href="#project/${project.slug}" data-story-card data-index="${index}" data-total="${total}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
+      <figure class="project-cover cinematic-cover ${images.length ? "" : "is-placeholder-only"}"${carouselAttr}>
         <span class="story-number" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span>
         <span class="cover-plate plate-a" data-speed="0.34" aria-hidden="true"></span>
         <span class="cover-plate plate-b" data-speed="-0.26" aria-hidden="true"></span>
         <span class="cover-line line-a" aria-hidden="true"></span>
         <span class="cover-line line-b" aria-hidden="true"></span>
-        ${images.map((src, imageIndex) => `<img class="carousel-image ${imageIndex === 0 ? "active" : ""}" data-speed="${index % 2 === 0 ? "-0.28" : "-0.38"}" src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} project thumbnail ${imageIndex + 1}" loading="lazy">`).join("")}
+        ${projectImageMarkup(project, images, index % 2 === 0 ? "-0.28" : "-0.38")}
       </figure>
       <div class="project-meta">
         <div>
@@ -942,7 +955,9 @@ function adminProjectCard(project, index) {
 function mediaTile(item) {
   const preview = item.type.startsWith("image/")
     ? `<img src="${item.src}" alt="${escapeHtml(item.name)}">`
-    : `<div class="panel"><strong>${escapeHtml(item.name)}</strong><p>${escapeHtml(item.type || "file")}</p></div>`;
+    : item.type.startsWith("video/")
+      ? `<video src="${escapeAttr(item.src)}" muted playsinline controls></video>`
+      : `<a class="media-file" href="${escapeAttr(item.src)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.type || "file")}</span></a>`;
   return `<article><div class="media-tile">${preview}</div><button class="button danger" type="button" data-delete-media="${item.id}">Delete</button></article>`;
 }
 
@@ -960,7 +975,7 @@ function projectUploadField(label, name, value, multiple) {
         </div>
         <label class="upload-button">
           <span>${multiple ? "Upload Gallery Images / Videos" : "Upload Cover Image"}</span>
-          <input type="file" ${multiple ? "multiple" : ""} accept="image/*,video/*" data-project-upload="#${name}">
+          <input type="file" ${multiple ? "multiple" : ""} accept="${multiple ? "image/*,video/*,application/pdf" : "image/*"}" data-project-upload="#${name}">
         </label>
         <details>
           <summary>${multiple ? "Paste media URLs manually" : "Paste cover URL manually"}</summary>
@@ -974,18 +989,29 @@ function projectUploadField(label, name, value, multiple) {
 function mediaPreview(src, index = 0) {
   if (isVideoSrc(src)) return `<video src="${escapeAttr(src)}" muted playsinline></video>`;
   if (isImageSrc(src)) return `<img src="${escapeAttr(src)}" alt="Selected media ${index + 1}">`;
+  if (isPdfSrc(src)) return `<span>PDF ${index + 1}</span>`;
   return `<span>${escapeHtml(src.slice(0, 80))}</span>`;
+}
+
+function projectImageMarkup(project, images, speed = "") {
+  if (!images.length) return `<span class="cover-placeholder" aria-hidden="true"></span>`;
+  return images.map((src, imageIndex) => {
+    const speedAttr = speed ? ` data-speed="${speed}"` : "";
+    const loading = imageIndex === 0 ? "eager" : "lazy";
+    return `<img class="carousel-image ${imageIndex === 0 ? "active" : ""}"${speedAttr} src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} project thumbnail ${imageIndex + 1}" loading="${loading}" decoding="async">`;
+  }).join("");
 }
 
 function projectImages(project) {
   const seen = new Set();
-  return [project.cover, ...(project.media || [])]
+  const images = [project.cover, ...(project.media || [])]
     .filter((src) => src && isImageSrc(src))
     .filter((src) => {
       if (seen.has(src)) return false;
       seen.add(src);
       return true;
     });
+  return images;
 }
 
 function projectGallery(project) {
@@ -1007,6 +1033,14 @@ function isImageSrc(src = "") {
 
 function isVideoSrc(src = "") {
   return /^data:video\//.test(src) || /\.(mp4|mov|ogg|webm)(\?.*)?$/i.test(src);
+}
+
+function isPdfSrc(src = "") {
+  return /^data:application\/pdf/.test(src) || /\.pdf(\?.*)?$/i.test(src);
+}
+
+function isBrowserStoredMedia(src = "") {
+  return /^data:(image|video|application\/pdf)\//.test(src);
 }
 
 function servicesSection() {
@@ -1202,6 +1236,9 @@ function bindStoryScroll() {
   if (!story || !cards.length || !output || prefersReducedMotion()) return;
 
   let active = null;
+  let snapLock = false;
+  let scrollEndTimer = null;
+  let wheelDelta = 0;
   let ticking = false;
   const update = () => {
     ticking = false;
@@ -1235,14 +1272,64 @@ function bindStoryScroll() {
       ticking = true;
       requestAnimationFrame(update);
     }
+    if (snapLock || window.matchMedia("(max-width: 900px)").matches) return;
+    window.clearTimeout(scrollEndTimer);
+    scrollEndTimer = window.setTimeout(() => {
+      const rect = story.getBoundingClientRect();
+      const inStory = rect.top < window.innerHeight * 0.7 && rect.bottom > window.innerHeight * 0.32;
+      if (!inStory || snapLock) return;
+      const activeIndex = Math.max(0, cards.indexOf(active));
+      snapToCard(activeIndex);
+    }, 150);
+  };
+
+  const snapToCard = (nextIndex) => {
+    const card = cards[nextIndex];
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    const top = window.scrollY + rect.top - Math.max(84, (window.innerHeight - rect.height) * 0.5);
+    snapLock = true;
+    window.scrollTo({ top, behavior: "smooth" });
+    window.setTimeout(() => {
+      snapLock = false;
+      wheelDelta = 0;
+      update();
+    }, 860);
+  };
+
+  const onWheel = (event) => {
+    if (window.matchMedia("(max-width: 900px)").matches) return;
+    const rect = story.getBoundingClientRect();
+    const direction = Math.sign(event.deltaY);
+    const enteringFromAbove = direction > 0 && rect.top > window.innerHeight * 0.34 && rect.top - event.deltaY < window.innerHeight * 0.7;
+    if (enteringFromAbove && !snapLock) {
+      event.preventDefault();
+      snapToCard(0);
+      return;
+    }
+    const inStory = rect.top < window.innerHeight * 0.72 && rect.bottom > window.innerHeight * 0.28;
+    if (!inStory) return;
+    if (snapLock) {
+      event.preventDefault();
+      return;
+    }
+    const activeIndex = Math.max(0, cards.indexOf(active));
+    if ((direction < 0 && activeIndex === 0) || (direction > 0 && activeIndex === cards.length - 1)) return;
+    wheelDelta += event.deltaY;
+    if (Math.abs(wheelDelta) < 42) return;
+    event.preventDefault();
+    snapToCard(Math.min(cards.length - 1, Math.max(0, activeIndex + direction)));
   };
 
   update();
   window.addEventListener("scroll", onScroll, { passive: true });
   window.addEventListener("resize", onScroll);
+  window.addEventListener("wheel", onWheel, { passive: false });
   storyCleanup = () => {
     window.removeEventListener("scroll", onScroll);
     window.removeEventListener("resize", onScroll);
+    window.removeEventListener("wheel", onWheel);
+    window.clearTimeout(scrollEndTimer);
     storyCleanup = null;
   };
 }
@@ -1273,12 +1360,17 @@ function bindTiltCards() {
 }
 
 function bindProjectCarousels() {
-  if (prefersReducedMotion() || window.matchMedia("(hover: none)").matches) return;
+  if (prefersReducedMotion()) return;
+  const firstSlideDelay = 220;
+  const slideDuration = 1600;
+  const returnDuration = 900;
   document.querySelectorAll("[data-carousel]").forEach((carousel) => {
     const images = [...carousel.querySelectorAll(".carousel-image")];
     if (images.length < 2) return;
+    const trigger = carousel.closest(".project-card") || carousel;
     let index = 0;
     let timer = null;
+    let firstTimer = null;
 
     const show = (nextIndex) => {
       index = nextIndex;
@@ -1290,22 +1382,27 @@ function bindProjectCarousels() {
 
     const start = () => {
       window.clearInterval(timer);
-      show((index + 1) % images.length);
-      timer = window.setInterval(() => show((index + 1) % images.length), 980);
+      window.clearTimeout(firstTimer);
+      firstTimer = window.setTimeout(() => {
+        show((index + 1) % images.length);
+        timer = window.setInterval(() => show((index + 1) % images.length), slideDuration);
+      }, firstSlideDelay);
     };
 
     const reset = () => {
       window.clearInterval(timer);
+      window.clearTimeout(firstTimer);
       timer = null;
+      firstTimer = null;
       show(0);
       carousel.classList.add("is-returning");
-      window.setTimeout(() => carousel.classList.remove("is-returning"), 650);
+      window.setTimeout(() => carousel.classList.remove("is-returning"), returnDuration);
     };
 
-    carousel.addEventListener("pointerenter", start);
-    carousel.addEventListener("pointerleave", reset);
-    carousel.addEventListener("focusin", start);
-    carousel.addEventListener("focusout", reset);
+    trigger.addEventListener("pointerenter", start);
+    trigger.addEventListener("pointerleave", reset);
+    trigger.addEventListener("focusin", start);
+    trigger.addEventListener("focusout", reset);
   });
 }
 
@@ -1400,4 +1497,4 @@ menuToggle.addEventListener("click", () => {
 window.addEventListener("hashchange", route);
 applySettings();
 route();
-window.setTimeout(() => document.body.classList.add("intro-complete"), 1350);
+window.setTimeout(() => document.body.classList.add("intro-complete"), 4500);

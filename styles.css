@@ -181,6 +181,10 @@ body.menu-open {
   overflow: hidden;
 }
 
+body:not(.intro-complete) {
+  overflow: hidden;
+}
+
 button,
 input,
 textarea,
@@ -239,25 +243,68 @@ video {
 .intro-loader {
   align-items: center;
   background: #070908;
-  color: var(--surface);
+  color: var(--ink);
+  contain: layout paint style;
   display: grid;
   inset: 0;
   justify-items: center;
+  overflow: hidden;
   pointer-events: none;
   position: fixed;
+  transform: translate3d(0, 0, 0);
+  transform-style: preserve-3d;
+  will-change: opacity, transform;
   z-index: 200;
-  animation: introExit 520ms var(--ease) 1180ms forwards;
+  animation: introExit 860ms cubic-bezier(0.76, 0, 0.24, 1) 3640ms forwards;
+}
+
+.intro-loader::before,
+.intro-loader::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  will-change: transform, opacity;
+}
+
+.intro-loader::before {
+  background:
+    linear-gradient(90deg, transparent 0 46%, rgba(240, 106, 42, 0.5) 46% 46.35%, transparent 46.35%),
+    linear-gradient(180deg, rgba(245, 240, 230, 0.12), transparent 62%);
+  height: 64vh;
+  opacity: 0;
+  right: 8vw;
+  top: 12vh;
+  transform: translate3d(34vw, 8vh, 0) rotate(-14deg) skewX(-9deg);
+  width: min(760px, 48vw);
+  z-index: 1;
+  animation: introPlane 4200ms cubic-bezier(0.16, 1, 0.3, 1) 40ms forwards;
+}
+
+.intro-loader::after {
+  background: linear-gradient(90deg, transparent, rgba(245, 240, 230, 0.2), transparent);
+  height: 100%;
+  left: -35vw;
+  opacity: 0;
+  top: 0;
+  transform: translate3d(0, 0, 0) skewX(-18deg);
+  width: 26vw;
+  z-index: 4;
+  animation: introSweep 3550ms cubic-bezier(0.16, 1, 0.3, 1) 420ms forwards;
 }
 
 .intro-loader p {
+  backface-visibility: hidden;
   font-family: var(--font-display);
   font-size: clamp(2.5rem, 8vw, 9rem);
   font-weight: 800;
   margin: 0;
   overflow: hidden;
+  position: relative;
   text-transform: uppercase;
-  transform: translateY(26px);
-  animation: introTitle 980ms var(--ease) 100ms forwards;
+  transform: translate3d(0, 46px, 0) scale(0.985);
+  will-change: opacity, transform;
+  z-index: 3;
+  animation: introTitle 3600ms cubic-bezier(0.16, 1, 0.3, 1) 80ms forwards;
 }
 
 .intro-loader span {
@@ -266,10 +313,12 @@ video {
   left: 50%;
   position: absolute;
   top: 58%;
-  transform: translateX(-50%) scaleX(0);
+  transform: translate3d(-50%, 0, 0) scaleX(0);
   transform-origin: left;
+  will-change: opacity, transform;
   width: min(620px, 72vw);
-  animation: introLine 980ms var(--ease) 180ms forwards;
+  z-index: 3;
+  animation: introLine 3580ms cubic-bezier(0.16, 1, 0.3, 1) 140ms forwards;
 }
 
 .intro-grid {
@@ -278,9 +327,12 @@ video {
     linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
   background-size: 84px 84px;
   inset: 0;
+  opacity: 0.82;
   position: absolute;
-  transform: scale(1.08);
-  animation: introGrid 1200ms var(--ease) forwards;
+  transform: translate3d(0, 22px, 0) scale(1.08);
+  will-change: opacity, transform;
+  z-index: 0;
+  animation: introGrid 4500ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 body.intro-complete .intro-loader {
@@ -422,18 +474,19 @@ body.is-routing .transition-panel {
 }
 
 .hero {
+  align-items: center;
   display: grid;
-  gap: clamp(28px, 4vw, 60px);
-  grid-template-columns: minmax(0, 0.78fr) minmax(320px, 1.22fr);
-  min-height: calc(100vh - 76px);
-  padding-bottom: clamp(42px, 8vh, 100px);
-  padding-top: clamp(28px, 6vh, 88px);
+  gap: clamp(24px, 3.5vw, 52px);
+  grid-template-columns: minmax(0, 0.82fr) minmax(320px, 1.18fr);
+  min-height: calc(100svh - 76px);
+  padding-bottom: clamp(28px, 5vh, 62px);
+  padding-top: clamp(24px, 4vh, 54px);
 }
 
 .hero-copy {
   animation: heroCopyIn 1050ms var(--ease) 250ms both;
-  align-self: end;
-  padding-bottom: clamp(10px, 5vh, 70px);
+  align-self: center;
+  padding-bottom: 0;
 }
 
 .eyebrow {
@@ -454,7 +507,7 @@ h3 {
 }
 
 h1 {
-  font-size: clamp(3.2rem, 6.5vw, 7.4rem);
+  font-size: clamp(2.75rem, 5.2vw, 5.85rem);
   max-width: 10ch;
 }
 
@@ -468,7 +521,7 @@ h3 {
 
 .lede {
   color: var(--muted);
-  font-size: clamp(1.05rem, 1.7vw, 1.45rem);
+  font-size: clamp(1rem, 1.35vw, 1.25rem);
   max-width: 720px;
 }
 
@@ -526,7 +579,8 @@ h3 {
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
   isolation: isolate;
-  min-height: 500px;
+  max-height: calc(100svh - 180px);
+  min-height: clamp(380px, 55svh, 560px);
   overflow: hidden;
   position: relative;
   transform-style: preserve-3d;
@@ -564,6 +618,7 @@ h3 {
 .media-tile {
   background:
     linear-gradient(135deg, rgba(245, 240, 230, 0.08), transparent 42%),
+    url("assets/project-courtyard.png") center / cover no-repeat,
     var(--soft);
   overflow: hidden;
   position: relative;
@@ -573,6 +628,7 @@ h3 {
 .project-cover img,
 .gallery-item img,
 .media-tile img {
+  color: transparent;
   filter: brightness(0.84) contrast(1.16) saturate(0.96);
   height: 100%;
   object-fit: cover;
@@ -822,28 +878,29 @@ h3 {
 
 .story-pin {
   align-self: start;
-  min-height: calc(100vh - 110px);
-  padding-top: clamp(12px, 4vh, 54px);
+  min-height: calc(100svh - 104px);
+  padding-top: clamp(8px, 2.5vh, 32px);
   position: sticky;
-  top: 96px;
+  top: 88px;
 }
 
 .story-pin h2 {
-  max-width: 9ch;
+  font-size: clamp(2.35rem, 3.7vw, 4.2rem);
+  max-width: 10ch;
 }
 
 .story-current {
   border-left: 3px solid var(--accent);
-  margin: clamp(24px, 4vw, 48px) 0;
-  min-height: 280px;
+  margin: clamp(16px, 2.5vw, 28px) 0;
+  min-height: 0;
   padding-left: 22px;
   transition: opacity 240ms ease, transform 240ms ease;
 }
 
 .story-rail {
   background: color-mix(in srgb, var(--line) 70%, transparent);
-  height: 160px;
-  margin-top: 30px;
+  height: 88px;
+  margin-top: 18px;
   position: relative;
   width: 3px;
 }
@@ -868,25 +925,29 @@ h3 {
   font-family: var(--font-display);
   font-size: 0.85rem;
   font-weight: 800;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .story-current p {
   color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   max-width: 470px;
+  overflow: hidden;
 }
 
 .story-current dl {
   border-top: 1px solid var(--line);
   display: grid;
-  margin-top: 24px;
+  margin-top: 16px;
 }
 
 .story-current div {
   border-bottom: 1px solid var(--line);
   display: flex;
   justify-content: space-between;
-  padding: 12px 0;
+  padding: 8px 0;
 }
 
 .story-current dt {
@@ -902,14 +963,18 @@ h3 {
 
 .story-stack {
   display: grid;
-  gap: clamp(48px, 10vh, 110px);
+  gap: clamp(36px, 7vh, 78px);
+  scroll-snap-type: y proximity;
 }
 
 .story-card {
   clip-path: inset(8% 0 8% 0);
   grid-column: auto;
-  min-height: min(72vh, 700px);
+  min-height: clamp(500px, calc(100svh - 160px), 640px);
   opacity: 0.58;
+  scroll-margin-top: 92px;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
   transform: translateX(48px) scale(0.96);
   transform-origin: center;
   transition:
@@ -923,7 +988,12 @@ h3 {
 }
 
 .story-card .project-cover {
-  aspect-ratio: 5 / 4;
+  aspect-ratio: 16 / 9;
+  max-height: clamp(300px, 50vh, 500px);
+}
+
+.story-card .project-cover img {
+  transform: scale(1.04);
 }
 
 .story-card.active {
@@ -1034,6 +1104,10 @@ h3 {
   grid-column: auto;
 }
 
+.story-stack .project-card:nth-child(3n + 2) {
+  margin-top: 0;
+}
+
 .project-card.revealed,
 .stat.revealed,
 .service.revealed,
@@ -1078,6 +1152,18 @@ h3 {
   box-shadow: 0 18px 45px rgba(20, 25, 22, 0.08);
 }
 
+.project-cover.is-placeholder-only {
+  background-position: center;
+}
+
+.cover-placeholder {
+  background:
+    linear-gradient(135deg, rgba(245, 240, 230, 0.3), transparent 46%),
+    linear-gradient(180deg, rgba(13, 17, 15, 0.05), rgba(13, 17, 15, 0.28));
+  inset: 0;
+  position: absolute;
+}
+
 .project-cover .carousel-image {
   inset: 0;
   opacity: 0;
@@ -1101,7 +1187,7 @@ h3 {
 }
 
 .project-cover.is-returning .carousel-image:first-of-type {
-  animation: coverReturn 650ms var(--ease) both;
+  animation: coverReturn 900ms var(--ease) both;
 }
 
 .project-cover::after {
@@ -1509,6 +1595,18 @@ h3 {
   aspect-ratio: 1;
 }
 
+.media-file {
+  align-content: center;
+  display: grid;
+  gap: 8px;
+  height: 100%;
+  padding: 16px;
+}
+
+.media-file span {
+  color: var(--muted);
+}
+
 .login-card {
   margin: clamp(50px, 10vw, 120px) auto;
   max-width: 480px;
@@ -1592,45 +1690,93 @@ h3 {
 }
 
 @keyframes introTitle {
-  from {
+  0% {
     opacity: 0;
-    transform: translateY(38px);
+    transform: translate3d(0, 46px, 0) scale(0.985);
   }
-  to {
+  26% {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  78% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    opacity: 0.92;
+    transform: translate3d(0, -12px, 0) scale(1.012);
   }
 }
 
 @keyframes introLine {
   0% {
     opacity: 0;
-    transform: translateX(-50%) scaleX(0);
+    transform: translate3d(-50%, 0, 0) scaleX(0);
   }
-  40% {
+  24% {
     opacity: 1;
+    transform: translate3d(-50%, 0, 0) scaleX(0.44);
+  }
+  62% {
+    opacity: 1;
+    transform: translate3d(-50%, 0, 0) scaleX(1);
   }
   100% {
-    opacity: 1;
-    transform: translateX(-50%) scaleX(1);
+    opacity: 0.72;
+    transform: translate3d(-50%, 0, 0) scaleX(0.72);
   }
 }
 
 @keyframes introGrid {
-  from {
-    opacity: 0;
-    transform: scale(1.12) translateY(30px);
+  0% {
+    opacity: 0.82;
+    transform: translate3d(0, 22px, 0) scale(1.08);
   }
-  to {
+  24% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0.9;
+    transform: translate3d(0, -18px, 0) scale(1.015);
+  }
+}
+
+@keyframes introPlane {
+  0% {
+    opacity: 0;
+    transform: translate3d(34vw, 8vh, 0) rotate(-14deg) skewX(-9deg);
+  }
+  28% {
+    opacity: 0.75;
+  }
+  100% {
+    opacity: 0.9;
+    transform: translate3d(-10vw, -3vh, 0) rotate(-14deg) skewX(-9deg);
+  }
+}
+
+@keyframes introSweep {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) skewX(-18deg);
+  }
+  20% {
     opacity: 1;
-    transform: scale(1) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(170vw, 0, 0) skewX(-18deg);
   }
 }
 
 @keyframes introExit {
-  to {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
     opacity: 0;
-    transform: translateY(-100%);
+    transform: translate3d(0, -100%, 0);
   }
 }
 
