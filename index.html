@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A refined architectural portfolio for completed residential, interior, commercial, and urban work.">
+    <title>Atelier Semir | Architecture Portfolio</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="scroll-progress" aria-hidden="true"></div>
+    <div class="ambient-scene" aria-hidden="true">
+      <div class="scene-camera">
+        <span class="scene-plane floor-a"></span>
+        <span class="scene-plane floor-b"></span>
+        <span class="scene-plane wall-a"></span>
+        <span class="scene-plane wall-b"></span>
+        <span class="scene-plane tower"></span>
+        <span class="scene-line line-x"></span>
+        <span class="scene-line line-y"></span>
+        <span class="scene-label" data-scene-label>Atelier Semir</span>
+      </div>
+    </div>
+    <div class="transition-panel" aria-hidden="true"></div>
+    <div class="intro-loader" aria-hidden="true">
+      <div class="intro-grid"></div>
+      <p>Atelier Semir</p>
+      <span></span>
+    </div>
+    <header class="site-header" id="siteHeader">
+      <a class="brand" href="#home" aria-label="Go to homepage">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span data-bind="siteName">Atelier Semir</span>
+      </a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="siteNav">
+        <span></span>
+        <span></span>
+        <span class="sr-only">Menu</span>
+      </button>
+      <nav class="site-nav" id="siteNav" aria-label="Primary navigation">
+        <a href="#work" data-nav="work">Work</a>
+        <a href="#about" data-nav="about">About</a>
+        <a href="#contact" data-nav="contact">Contact</a>
+        <a class="nav-admin" href="#admin">Admin</a>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1"></main>
+
+    <div class="toast" role="status" aria-live="polite"></div>
+
+    <template id="confirmTemplate">
+      <div class="modal-backdrop" role="presentation">
+        <section class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+          <p class="eyebrow">Confirm Action</p>
+          <h2 id="confirmTitle">Delete item?</h2>
+          <p data-confirm-message>This cannot be undone.</p>
+          <div class="dialog-actions">
+            <button class="button ghost" data-confirm-cancel type="button">Cancel</button>
+            <button class="button danger" data-confirm-ok type="button">Delete</button>
+          </div>
+        </section>
+      </div>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
