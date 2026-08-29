@@ -388,11 +388,6 @@ function renderHome() {
         </figcaption>
       </figure>
     </section>
-    <section class="stats-strip" aria-label="Portfolio highlights">
-      <div class="stat"><strong>${publishedProjects().length}</strong><span>Published projects</span></div>
-      <div class="stat"><strong>${state.services.length}</strong><span>Architecture services</span></div>
-      <div class="stat"><strong>01</strong><span>Clear editable portfolio system</span></div>
-    </section>
     <section class="section container scroll-cinema">
       <div class="cinema-copy">
         <p class="eyebrow">Spatial Scroll</p>
@@ -1242,7 +1237,7 @@ function bindContactForm() {
 }
 
 function bindReveal() {
-  const cards = document.querySelectorAll(".project-card, .stat, .service, .case-section, .gallery-item, .section-header");
+  const cards = document.querySelectorAll(".project-card, .service, .case-section, .gallery-item, .section-header");
   if (prefersReducedMotion()) {
     cards.forEach((card) => card.classList.add("revealed"));
     return;
@@ -1307,7 +1302,6 @@ function bindParallax() {
 function bindImmersiveScene() {
   if (immersiveCleanup) immersiveCleanup();
   const scene = document.querySelector(".ambient-scene");
-  const label = document.querySelector("[data-scene-label]");
   const storyCards = [...document.querySelectorAll("[data-story-card]")];
   const projectCards = [...document.querySelectorAll(".project-card")];
   const sceneTargets = storyCards.length ? storyCards : projectCards;
@@ -1337,7 +1331,6 @@ function bindImmersiveScene() {
       .sort((a, b) => a.distance - b.distance)[0]?.item;
     const category = activeTarget?.dataset.category || "Residential";
     const [accent, glow] = palette[category] || palette.Residential;
-    const title = activeTarget?.dataset.title || state.settings.siteName;
 
     document.documentElement.style.setProperty("--scene-tilt", `${-17 + pageProgress * 34}deg`);
     document.documentElement.style.setProperty("--scene-spin", `${-24 + pageProgress * 78}deg`);
@@ -1345,8 +1338,7 @@ function bindImmersiveScene() {
     document.documentElement.style.setProperty("--scene-scale", `${0.86 + pageProgress * 0.2}`);
     document.documentElement.style.setProperty("--scene-accent", accent);
     document.documentElement.style.setProperty("--scene-glow", glow);
-    scene.style.opacity = window.location.hash.includes("admin") ? "0.16" : "0.72";
-    if (label) label.textContent = title;
+    scene.style.opacity = window.location.hash.includes("admin") ? "0.08" : "0.18";
   };
 
   const onScroll = () => {

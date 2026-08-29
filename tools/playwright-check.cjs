@@ -21,6 +21,38 @@ async function removeChromiumDebugLog() {
   await fs.rm(path.join(process.cwd(), "debug.log"), { force: true });
 }
 
+async function readServerState() {
+  const response = await fetch(`${baseUrl}/api/state`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Could not read initial state: ${response.status}.`);
+  return response.json();
+}
+
+async function restoreServerState(originalState) {
+  if (!originalState) return;
+
+  const login = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      email: process.env.ARCH_ADMIN_EMAIL || "studio@example.com",
+      password: process.env.ARCH_ADMIN_PASSWORD || "architect2026"
+    })
+  });
+  if (!login.ok) throw new Error(`Could not log in to restore state: ${login.status}.`);
+
+  const cookie = login.headers.get("set-cookie");
+  const restore = await fetch(`${baseUrl}/api/state`, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      ...(cookie ? { cookie } : {})
+    },
+    body: JSON.stringify(originalState)
+  });
+  if (!restore.ok) throw new Error(`Could not restore original state: ${restore.status}.`);
+}
+
 async function check(name, fn) {
   try {
     await fn();
@@ -39,11 +71,50 @@ async function hasNoHorizontalScroll(page) {
   if (!ok) throw new Error("Page has horizontal scrolling.");
 }
 
+async function hasPureWhiteTheme(page) {
+  const theme = await page.evaluate(() => {
+    const background = getComputedStyle(document.body).backgroundColor;
+    const before = getComputedStyle(document.body, "::before");
+    return {
+      background,
+      beforeDisplay: before.display,
+      beforeOpacity: before.opacity,
+      backgroundTextCount: document.querySelectorAll("[data-scene-label], .scene-label").length,
+      statsCount: document.querySelectorAll(".stats-strip").length
+    };
+  });
+  if (theme.background !== "rgb(255, 255, 255)") throw new Error(`Homepage background is not pure white: ${theme.background}.`);
+  if (theme.beforeDisplay !== "none" && Number(theme.beforeOpacity) > 0) throw new Error("Body pseudo-background is still visible.");
+  if (theme.backgroundTextCount !== 0) throw new Error("Decorative background text should be removed.");
+  if (theme.statsCount !== 0) throw new Error("Stats strip should be removed from the homepage.");
+}
+
 async function resetLocalState(page) {
   await page.evaluate(() => {
     localStorage.removeItem("archPortfolioState.v1");
     sessionStorage.removeItem("archPortfolioAdminSession");
   });
+}
+
+async function portfolioState(page) {
+  return page.evaluate(async () => {
+    const localState = localStorage.getItem("archPortfolioState.v1");
+    if (localState) return JSON.parse(localState);
+
+    const response = await fetch("/api/state");
+    if (!response.ok) throw new Error(`State API returned ${response.status}.`);
+    return response.json();
+  });
+}
+
+async function ensureAdmin(page) {
+  await page.locator("#loginEmail, [data-admin-tab='projects']").first().waitFor({ state: "visible", timeout: 7000 });
+  if (await page.locator("[data-admin-tab='projects']").count()) return;
+
+  await page.locator("#loginEmail").fill("studio@example.com");
+  await page.locator("#loginPassword").fill("architect2026");
+  await page.getByRole("button", { name: "Log In" }).click();
+  await visibleText(page, "Manage the portfolio");
 }
 
 async function waitForIntro(page) {
@@ -62,6 +133,7 @@ async function pathExists(filePath) {
 (async () => {
   await removeChromiumDebugLog();
   await fs.mkdir(outDir, { recursive: true });
+  const originalState = await readServerState();
   const browser = await chromium.launch({ headless: true });
 
   for (const viewport of [
@@ -71,13 +143,14 @@ async function pathExists(filePath) {
   ]) {
     const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } });
     await check(`${viewport.name} homepage renders`, async () => {
-      await page.goto(`${baseUrl}/#home`, { waitUntil: "networkidle" });
+      await page.goto(`${baseUrl}/#home`, { waitUntil: "domcontentloaded" });
       await resetLocalState(page);
-      await page.reload({ waitUntil: "networkidle" });
+      await page.reload({ waitUntil: "domcontentloaded" });
       await waitForIntro(page);
       await visibleText(page, "Architecture shaped by light");
       await visibleText(page, "Selected Work");
       await hasNoHorizontalScroll(page);
+      await hasPureWhiteTheme(page);
       await page.screenshot({ path: path.join(outDir, `${viewport.name}-home.png`), fullPage: true });
     });
     await page.close();
@@ -85,9 +158,9 @@ async function pathExists(filePath) {
 
   const heroFitPage = await browser.newPage({ viewport: { width: 1707, height: 900 } });
   await check("wide desktop hero fits first viewport", async () => {
-    await heroFitPage.goto(`${baseUrl}/#home`, { waitUntil: "networkidle" });
+    await heroFitPage.goto(`${baseUrl}/#home`, { waitUntil: "domcontentloaded" });
     await resetLocalState(heroFitPage);
-    await heroFitPage.reload({ waitUntil: "networkidle" });
+    await heroFitPage.reload({ waitUntil: "domcontentloaded" });
     await waitForIntro(heroFitPage);
     const fit = await heroFitPage.evaluate(() => {
       const viewportHeight = window.innerHeight;
@@ -109,12 +182,12 @@ async function pathExists(filePath) {
   await heroFitPage.close();
 
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
-  await page.goto(`${baseUrl}/#home`, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/#home`, { waitUntil: "domcontentloaded" });
   await waitForIntro(page);
   await resetLocalState(page);
 
   await check("work page filters", async () => {
-    await page.goto(`${baseUrl}/#work`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#work`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await visibleText(page, "Selected projects and spatial studies");
     await page.getByRole("button", { name: "Interior" }).click();
@@ -124,7 +197,7 @@ async function pathExists(filePath) {
   });
 
   await check("project detail route", async () => {
-    await page.goto(`${baseUrl}/#project/courtyard-house`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#project/courtyard-house`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await visibleText(page, "Courtyard House");
     await visibleText(page, "Concept");
@@ -134,15 +207,17 @@ async function pathExists(filePath) {
   });
 
   await check("contact validation", async () => {
-    await page.goto(`${baseUrl}/#contact`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#contact`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
+    const panelBackground = await page.locator(".contact-panel").evaluate((node) => getComputedStyle(node).backgroundColor);
+    if (panelBackground === "rgb(255, 255, 255)") throw new Error("Contact panel should be visually separated from the white page background.");
     await page.getByRole("button", { name: "Send Inquiry" }).click();
     const invalidCount = await page.locator(".field.invalid").count();
     if (invalidCount < 1) throw new Error("Expected validation errors after empty submit.");
   });
 
   await check("admin login and edit settings", async () => {
-    await page.goto(`${baseUrl}/#admin`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#admin`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await page.locator("#loginEmail").fill("studio@example.com");
     await page.locator("#loginPassword").fill("architect2026");
@@ -153,10 +228,10 @@ async function pathExists(filePath) {
     await page.locator("#contactEmail").fill("test@example.com");
     await page.getByRole("button", { name: "Save Settings" }).click();
     await visibleText(page, "Settings saved");
-    await visibleText(page, "Atelier Test");
+    await page.locator(".brand [data-bind='siteName']").filter({ hasText: "Atelier Test" }).waitFor({ state: "visible", timeout: 5000 });
     const introName = await page.locator(".intro-loader [data-bind='siteName']").textContent();
     if (introName !== "Atelier Test") throw new Error("Intro title did not update with the site name.");
-    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("archPortfolioState.v1")));
+    const stored = await portfolioState(page);
     if (stored.settings.siteName !== "Atelier Test") throw new Error("Settings were not saved.");
     if (stored.settings.contactEmail !== "test@example.com") throw new Error("Contact email was not saved.");
     await page.evaluate(() => window.scrollTo(0, 0));
@@ -165,6 +240,7 @@ async function pathExists(filePath) {
 
   await check("admin create and delete project", async () => {
     await page.getByRole("button", { name: "Projects" }).click();
+    const expectedStoryCards = (await portfolioState(page)).projects.filter((item) => item.published).length + 1;
     await page.getByRole("button", { name: "New Project" }).click();
     await page.locator("#title").fill("Playwright Test House");
     await page.locator("#slug").fill("playwright-test-house");
@@ -184,8 +260,9 @@ async function pathExists(filePath) {
     await page.getByRole("button", { name: "Save Project" }).click();
     await visibleText(page, "Project saved");
     await visibleText(page, "Playwright Test House");
-    const uploadedPaths = await page.evaluate(() => {
-      const stored = JSON.parse(localStorage.getItem("archPortfolioState.v1"));
+    const uploadedPaths = await page.evaluate(async () => {
+      const localState = localStorage.getItem("archPortfolioState.v1");
+      const stored = localState ? JSON.parse(localState) : await fetch("/api/state").then((response) => response.json());
       const project = stored.projects.find((item) => item.title === "Playwright Test House");
       return [project.cover, ...project.media];
     });
@@ -200,13 +277,13 @@ async function pathExists(filePath) {
       if (!await pathExists(absolute)) throw new Error(`Uploaded file missing on disk: ${src}`);
       uploadedFilesToClean.add(absolute);
     }
-    await page.goto(`${baseUrl}/#home`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#home`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await visibleText(page, "Playwright Test House");
-    await visibleText(page, "01 / 05");
+    await page.locator("[data-story-card]").first().waitFor({ state: "attached", timeout: 5000 });
     const storyCards = await page.locator("[data-story-card]").count();
-    if (storyCards !== 5) throw new Error(`Expected 5 story cards after creating a project, found ${storyCards}.`);
-    await page.goto(`${baseUrl}/#admin`, { waitUntil: "networkidle" });
+    if (storyCards !== expectedStoryCards) throw new Error(`Expected ${expectedStoryCards} story cards after creating a project, found ${storyCards}.`);
+    await page.goto(`${baseUrl}/#admin`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await page.locator("[data-admin-tab='projects']").click();
     await page.locator("[data-delete-project]").first().click();
@@ -216,7 +293,7 @@ async function pathExists(filePath) {
   });
 
   await check("project hover carousel cycles and returns", async () => {
-    await page.goto(`${baseUrl}/#work`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#work`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await visibleText(page, "Selected projects and spatial studies");
     const card = page.locator(".project-card").first();
@@ -233,9 +310,9 @@ async function pathExists(filePath) {
 
   await check("story sequence snaps one project at a time", async () => {
     await page.setViewportSize({ width: 1707, height: 900 });
-    await page.goto(`${baseUrl}/#home`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#home`, { waitUntil: "domcontentloaded" });
     await resetLocalState(page);
-    await page.reload({ waitUntil: "networkidle" });
+    await page.reload({ waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.mouse.move(900, 450);
@@ -271,15 +348,9 @@ async function pathExists(filePath) {
   });
 
   await check("single image projects do not start carousel", async () => {
-    await page.goto(`${baseUrl}/#admin`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#admin`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
-    if (await page.locator("[data-admin-tab='projects']").count() === 0) {
-      await visibleText(page, "Portfolio Control Room");
-      await page.locator("#loginEmail").fill("studio@example.com");
-      await page.locator("#loginPassword").fill("architect2026");
-      await page.getByRole("button", { name: "Log In" }).click();
-      await visibleText(page, "Manage the portfolio");
-    }
+    await ensureAdmin(page);
     await page.locator("[data-admin-tab='projects']").click();
     await page.getByRole("button", { name: "New Project" }).click();
     await page.locator("#title").fill("Single Image House");
@@ -292,12 +363,13 @@ async function pathExists(filePath) {
     await page.locator("#summary").fill("A single cover image should not become a carousel.");
     await page.getByRole("button", { name: "Save Project" }).click();
     await visibleText(page, "Project saved");
-    const uploadedCover = await page.evaluate(() => {
-      const stored = JSON.parse(localStorage.getItem("archPortfolioState.v1"));
+    const uploadedCover = await page.evaluate(async () => {
+      const localState = localStorage.getItem("archPortfolioState.v1");
+      const stored = localState ? JSON.parse(localState) : await fetch("/api/state").then((response) => response.json());
       return stored.projects.find((item) => item.title === "Single Image House")?.cover;
     });
     if (uploadedCover?.startsWith("assets/uploads/")) uploadedFilesToClean.add(path.join(process.cwd(), uploadedCover));
-    await page.goto(`${baseUrl}/#work`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#work`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await visibleText(page, "Selected projects and spatial studies");
     await visibleText(page, "Single Image House");
@@ -306,7 +378,7 @@ async function pathExists(filePath) {
     const hasCarousel = await singleCard.locator("[data-carousel]").count();
     if (imageCount !== 1) throw new Error(`Expected one image, found ${imageCount}.`);
     if (hasCarousel !== 0) throw new Error("Single-image project still has carousel behavior.");
-    await page.goto(`${baseUrl}/#admin`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#admin`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await page.locator("[data-admin-tab='projects']").click();
     await page.locator("[data-delete-project]").first().click();
@@ -316,7 +388,7 @@ async function pathExists(filePath) {
   });
 
   await check("keyboard focus visible", async () => {
-    await page.goto(`${baseUrl}/#home`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#home`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await page.keyboard.press("Tab");
     const focused = await page.evaluate(() => Boolean(document.activeElement && document.activeElement.matches(":focus-visible")));
@@ -326,9 +398,9 @@ async function pathExists(filePath) {
 
   const reducePage = await browser.newPage({ viewport: { width: 375, height: 900 }, reducedMotion: "reduce" });
   await check("reduced motion renders", async () => {
-    await reducePage.goto(`${baseUrl}/#home`, { waitUntil: "networkidle" });
+    await reducePage.goto(`${baseUrl}/#home`, { waitUntil: "domcontentloaded" });
     await resetLocalState(reducePage);
-    await reducePage.reload({ waitUntil: "networkidle" });
+    await reducePage.reload({ waitUntil: "domcontentloaded" });
     await waitForIntro(reducePage);
     await visibleText(reducePage, "Architecture shaped by light");
     await hasNoHorizontalScroll(reducePage);
@@ -340,6 +412,7 @@ async function pathExists(filePath) {
   for (const filePath of uploadedFilesToClean) {
     await fs.rm(filePath, { force: true });
   }
+  await restoreServerState(originalState);
   console.table(results);
   await removeChromiumDebugLog();
   const failed = results.filter((result) => result.status === "failed");
