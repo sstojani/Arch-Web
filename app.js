@@ -1,9 +1,9 @@
-const STORAGE_KEY = "archPortfolioState.v1";
-const SESSION_KEY = "archPortfolioAdminSession";
-const adminCredentials = {
-  email: "studio@example.com",
-  password: "architect2026"
-};
+const LEGACY_STORAGE_KEY = "archPortfolioState.v1";
+
+let adminAuthenticated = false;
+let serverStateExists = false;
+let legacyStatePendingMigration = false;
+let stateSaveQueue = Promise.resolve();
 
 const imageBank = [
   "assets/project-courtyard.png",
@@ -137,7 +137,7 @@ const seedState = {
   mediaItems: []
 };
 
-let state = loadState();
+let state = structuredClone(seedState);
 let currentAdminTab = "dashboard";
 let editingProjectId = null;
 let hasRenderedRoute = false;
@@ -151,27 +151,122 @@ const toast = document.querySelector(".toast");
 const menuToggle = document.querySelector(".menu-toggle");
 const scrollProgress = document.querySelector(".scroll-progress");
 
-function loadState() {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) return structuredClone(seedState);
+async function loadInitialServerState() {
+  let legacyState = null;
+
   try {
-    const normalized = normalizeStoredState({ ...structuredClone(seedState), ...JSON.parse(stored) });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-    return normalized;
-  } catch {
-    return structuredClone(seedState);
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (raw) legacyState = JSON.parse(raw);
+  } catch (error) {
+    console.warn("Could not read old browser portfolio data.", error);
   }
+
+  try {
+    const response = await fetch("/api/state", {
+      cache: "no-store"
+    });
+
+    if (response.ok) {
+      state = normalizeStoredState(await response.json());
+      serverStateExists = true;
+      legacyStatePendingMigration = false;
+
+      try {
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      } catch {}
+
+      return;
+    }
+
+    if (response.status !== 404) {
+      throw new Error("State API returned HTTP " + response.status);
+    }
+  } catch (error) {
+    console.error("Could not load portfolio state from server.", error);
+  }
+
+  if (legacyState) {
+    state = normalizeStoredState({
+      ...structuredClone(seedState),
+      ...legacyState
+    });
+
+    legacyStatePendingMigration = true;
+  } else {
+    state = structuredClone(seedState);
+  }
+}
+
+async function writeStateToServer(snapshot) {
+  const response = await fetch("/api/state", {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(snapshot)
+  });
+
+  const result = await response.json().catch(() => ({}));
+
+  if (response.status === 401) {
+    adminAuthenticated = false;
+    throw new Error("Admin session expired. Log in again.");
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      result.error ||
+      ("Server rejected save with HTTP " + response.status)
+    );
+  }
+
+  serverStateExists = true;
+  legacyStatePendingMigration = false;
+
+  try {
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {}
+
+  return true;
 }
 
 function saveState() {
   try {
     state = normalizeStoredState(state);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     applySettings();
+
+    const snapshot = structuredClone(state);
+
+    stateSaveQueue = stateSaveQueue
+      .then(() => writeStateToServer(snapshot))
+      .catch((error) => {
+        console.error(error);
+        showToast(error.message || "Could not save changes to server.");
+      });
+
     return true;
-  } catch {
-    showToast("Could not save. Try clearing old browser data from this prototype.");
+  } catch (error) {
+    console.error(error);
+    showToast("Could not prepare changes for server storage.");
     return false;
+  }
+}
+
+async function refreshAdminAuthentication() {
+  try {
+    const response = await fetch("/api/auth", {
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      adminAuthenticated = false;
+      return;
+    }
+
+    const result = await response.json();
+    adminAuthenticated = result.authenticated === true;
+  } catch {
+    adminAuthenticated = false;
   }
 }
 
@@ -446,7 +541,7 @@ function renderAdmin() {
       <section class="login-card panel">
         <p class="eyebrow">Admin</p>
         <h1>Portfolio Control Room</h1>
-        <p class="lede">Use the seeded local credentials to enter: ${adminCredentials.email} / ${adminCredentials.password}</p>
+        <p class="lede">Sign in to manage the server-backed portfolio.</p>
         <form id="loginForm" novalidate>
           <div class="field"><label for="loginEmail">Email</label><input id="loginEmail" type="email" required autocomplete="username"></div>
           <div class="field"><label for="loginPassword">Password</label><input id="loginPassword" type="password" required autocomplete="current-password"></div>
@@ -569,7 +664,7 @@ function mediaAdmin() {
         <label for="mediaUpload">Add photos, plan images, PDFs, or videos</label>
         <input id="mediaUpload" type="file" multiple accept="image/*,video/*,application/pdf">
       </div>
-      <p class="micro">Files are stored in this browser for the local prototype. For production, connect durable storage.</p>
+      <p class="micro">Files and portfolio content are stored on the server and shared across devices.</p>
     </div>
     <div class="media-library">
       ${state.mediaItems.map(mediaTile).join("") || emptyState("No uploaded media yet.")}
@@ -627,8 +722,14 @@ function bindAdmin() {
 
   const logout = document.querySelector("[data-admin-logout]");
   if (logout) {
-    logout.addEventListener("click", () => {
-      sessionStorage.removeItem(SESSION_KEY);
+    logout.addEventListener("click", async () => {
+      try {
+        await fetch("/api/logout", {
+          method: "POST"
+        });
+      } catch {}
+
+      adminAuthenticated = false;
       showToast("Logged out.");
       renderAdmin();
     });
@@ -650,7 +751,7 @@ function bindAdmin() {
   document.querySelectorAll("[data-delete-project]").forEach((button) => {
     button.addEventListener("click", () => {
       const project = state.projects.find((item) => item.id === button.dataset.deleteProject);
-      askConfirm(`Delete ${project.title}?`, "This removes the project from the local portfolio.", () => {
+      askConfirm(`Delete ${project.title}?`, "This removes the project from the server portfolio.", () => {
         state.projects = state.projects.filter((item) => item.id !== project.id);
         if (!saveState()) return;
         showToast("Project deleted.");
@@ -679,7 +780,7 @@ function bindAdmin() {
 
   document.querySelectorAll("[data-delete-media]").forEach((button) => {
     button.addEventListener("click", () => {
-      askConfirm("Delete media item?", "This removes the uploaded item from this browser.", () => {
+      askConfirm("Delete media item?", "This removes the item from the server portfolio library.", () => {
         state.mediaItems = state.mediaItems.filter((item) => item.id !== button.dataset.deleteMedia);
         if (!saveState()) return;
         renderAdmin();
@@ -695,7 +796,7 @@ function bindAdmin() {
   const resetSite = document.querySelector("[data-reset-site]");
   if (resetSite) {
     resetSite.addEventListener("click", () => {
-      askConfirm("Reset demo content?", "This will replace all local edits with the seeded portfolio.", () => {
+      askConfirm("Reset demo content?", "This will replace the server portfolio with the seeded content.", () => {
         state = structuredClone(seedState);
         if (!saveState()) return;
         showToast("Demo content restored.");
@@ -705,17 +806,55 @@ function bindAdmin() {
   }
 }
 
-function handleLogin(event) {
+async function handleLogin(event) {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const email = form.get("loginEmail") || document.querySelector("#loginEmail").value;
-  const password = form.get("loginPassword") || document.querySelector("#loginPassword").value;
-  if (email === adminCredentials.email && password === adminCredentials.password) {
-    sessionStorage.setItem(SESSION_KEY, "true");
-    showToast("Welcome back.");
+
+  const email = document.querySelector("#loginEmail").value.trim();
+  const password = document.querySelector("#loginPassword").value;
+
+  try {
+    const response = await fetch("/api/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email,
+        password
+      })
+    });
+
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      showToast(result.error || "Invalid admin credentials.");
+      return;
+    }
+
+    adminAuthenticated = true;
+
+    /*
+     * If this browser contains your OLD localStorage portfolio and
+     * the server does not have state yet, migrate it automatically.
+     */
+    if (!serverStateExists || legacyStatePendingMigration) {
+      const wasLegacy = legacyStatePendingMigration;
+
+      await writeStateToServer(structuredClone(state));
+
+      showToast(
+        wasLegacy
+          ? "Your existing browser portfolio was migrated to the server."
+          : "Server portfolio initialized."
+      );
+    } else {
+      showToast("Welcome back.");
+    }
+
     renderAdmin();
-  } else {
-    showToast("Invalid admin credentials.");
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not contact the server.");
   }
 }
 
@@ -1429,7 +1568,7 @@ function showToast(message) {
 }
 
 function isLoggedIn() {
-  return sessionStorage.getItem(SESSION_KEY) === "true";
+  return adminAuthenticated;
 }
 
 function input(label, name, value = "", required = false, extraClass = "") {
@@ -1495,6 +1634,25 @@ menuToggle.addEventListener("click", () => {
 });
 
 window.addEventListener("hashchange", route);
-applySettings();
-route();
-window.setTimeout(() => document.body.classList.add("intro-complete"), 4500);
+
+async function initializeApp() {
+  await loadInitialServerState();
+  await refreshAdminAuthentication();
+
+  applySettings();
+  route();
+
+  window.setTimeout(
+    () => document.body.classList.add("intro-complete"),
+    4500
+  );
+}
+
+initializeApp().catch((error) => {
+  console.error("Application initialization failed.", error);
+
+  state = structuredClone(seedState);
+
+  applySettings();
+  route();
+});

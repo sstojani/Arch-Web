@@ -4,6 +4,7 @@ const http = require("http");
 const path = require("path");
 
 const root = __dirname;
+const serverState = require("./server-state.cjs");
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "127.0.0.1";
 const uploadDir = path.join(root, "assets", "uploads");
@@ -129,6 +130,22 @@ async function handleUpload(request, response) {
 async function serveStatic(request, response) {
   const url = new URL(request.url, `http://${request.headers.host || `${host}:${port}`}`);
   const requestedPath = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+
+  const blocked =
+    requestedPath === "/server.cjs" ||
+    requestedPath === "/server-state.cjs" ||
+    requestedPath === "/.gitignore" ||
+    requestedPath.startsWith("/data/") ||
+    requestedPath.startsWith("/.git/") ||
+    requestedPath.startsWith("/tools/");
+
+  if (blocked) {
+    send(response, 404, "Not found", {
+      "cache-control": "no-store"
+    });
+    return;
+  }
+
   const filePath = path.resolve(root, `.${requestedPath}`);
   const relative = path.relative(root, filePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -139,14 +156,33 @@ async function serveStatic(request, response) {
   try {
     const data = await fs.readFile(filePath);
     const type = types[path.extname(filePath).toLowerCase()] || "application/octet-stream";
-    send(response, 200, data, { "content-type": type });
+    send(
+      response,
+      200,
+      request.method === "HEAD" ? Buffer.alloc(0) : data,
+      {
+        "content-type": type,
+        "cache-control": "no-store"
+      }
+    );
   } catch {
     send(response, 404, "Not found");
   }
 }
 
 const server = http.createServer((request, response) => {
+  if (serverState.handle(request, response)) {
+    return;
+  }
+
   if (request.method === "POST" && request.url?.startsWith("/api/upload")) {
+    if (!serverState.isAuthenticated(request)) {
+      sendJson(response, 401, {
+        error: "Admin authentication required."
+      });
+      return;
+    }
+
     handleUpload(request, response);
     return;
   }

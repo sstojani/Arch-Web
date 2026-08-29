@@ -1,1 +1,5 @@
 debug.log
+.migration-backup/
+data/portfolio.json
+data/*.tmp
+assets/uploads/
