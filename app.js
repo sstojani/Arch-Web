@@ -14,6 +14,8 @@ const imageBank = [
   "assets/project-facade.png"
 ];
 
+const demoMediaPaths = new Set(imageBank);
+
 const seedState = {
   settings: {
     siteName: "Atelier Semir",
@@ -140,6 +142,7 @@ const seedState = {
 let state = structuredClone(seedState);
 let currentAdminTab = "dashboard";
 let editingProjectId = null;
+let pendingProjectUploads = new Set();
 let hasRenderedRoute = false;
 let routeTimer = null;
 let parallaxCleanup = null;
@@ -284,7 +287,7 @@ function normalizeStoredState(input) {
   next.projects = next.projects.map((project, index) => ({
     ...project,
     cover: isBrowserStoredMedia(project.cover) ? imageBank[index % imageBank.length] : project.cover,
-    media: (project.media || []).filter((src) => !isBrowserStoredMedia(src))
+    media: splitMediaSources(project.media || []).filter((src) => !isBrowserStoredMedia(src))
   }));
   next.mediaItems = next.mediaItems.filter((item) => item && !isBrowserStoredMedia(item.src));
   return next;
@@ -345,6 +348,7 @@ function setActiveNav(name) {
 function page(content) {
   main.innerHTML = `<div class="page">${content}</div>`;
   main.focus({ preventScroll: true });
+  bindMediaFallbacks(main);
   bindReveal();
   bindParallax();
   bindTiltCards();
@@ -356,6 +360,10 @@ function page(content) {
 
 function publishedProjects() {
   return state.projects.filter((project) => project.published);
+}
+
+function projectAssetCount() {
+  return new Set(state.projects.flatMap((project) => collectProjectMedia(project)).filter(isUploadedAsset)).size;
 }
 
 function renderHome() {
@@ -430,7 +438,6 @@ function renderHome() {
       </div>
     </section>
     ${servicesSection()}
-    ${contactCta()}
   `);
 }
 
@@ -502,21 +509,30 @@ function renderProject(slug) {
 
 function renderAbout() {
   page(`
-    <section class="page-head container">
+    <section class="page-head container about-head">
       <p class="eyebrow">About</p>
-      <h1>Architecture with context, restraint, and clarity.</h1>
+      <h1>A practice shaped by observation, clear writing, and careful spaces.</h1>
+      <p class="lede">I use writing as the first design tool: to understand a site, frame the problem, and turn each project into a clear spatial story.</p>
     </section>
-    <section class="section container">
-      <div class="split">
-        <div><p class="lede">${escapeHtml(state.settings.intro)}</p></div>
-        <div>
-          <h2>Approach</h2>
-          <p class="lede">${escapeHtml(state.settings.philosophy)}</p>
-          <div class="services">${state.services.map((service, index) => serviceRow(service, index)).join("")}</div>
-        </div>
+    <section class="section container about-profile">
+      <div class="about-note">
+        <p class="eyebrow">Profile</p>
+        <p class="lede">${escapeHtml(state.settings.intro)}</p>
+        <p>${escapeHtml(state.settings.philosophy)}</p>
+      </div>
+      <div class="about-achievements">
+        <p class="eyebrow">What I Bring</p>
+        <h2>From concept notes to finished places.</h2>
+        <div class="services">${state.services.map((service, index) => serviceRow(service, index)).join("")}</div>
       </div>
     </section>
-    ${contactCta()}
+    <section class="section container about-statement">
+      <div>
+        <p class="eyebrow">Method</p>
+        <h2>Every project starts with a sentence that makes the idea simple.</h2>
+      </div>
+      <p class="lede">Before the image, I look for the reason behind the work: how people arrive, what they need to feel, which materials should stay quiet, and where light can do the heavy lifting.</p>
+    </section>
   `);
 }
 
@@ -553,7 +569,7 @@ function renderAdmin() {
       <aside class="admin-sidebar">
         <p class="eyebrow">Admin</p>
         <h2>${escapeHtml(state.settings.siteName)}</h2>
-        ${["dashboard", "projects", "media", "content", "settings"].map((tab) => `<button type="button" data-admin-tab="${tab}" class="${currentAdminTab === tab ? "active" : ""}">${titleCase(tab)}</button>`).join("")}
+        ${["dashboard", "projects", "content", "settings"].map((tab) => `<button type="button" data-admin-tab="${tab}" class="${currentAdminTab === tab ? "active" : ""}">${titleCase(tab)}</button>`).join("")}
         <button type="button" data-admin-logout>Log Out</button>
       </aside>
       <section class="admin-main" id="adminMain">${adminTab()}</section>
@@ -564,7 +580,6 @@ function renderAdmin() {
 
 function adminTab() {
   if (currentAdminTab === "projects") return projectsAdmin();
-  if (currentAdminTab === "media") return mediaAdmin();
   if (currentAdminTab === "content") return contentAdmin();
   if (currentAdminTab === "settings") return settingsAdmin();
   return dashboardAdmin();
@@ -577,7 +592,7 @@ function dashboardAdmin() {
     <div class="admin-grid">
       <div class="panel"><strong>${state.projects.length}</strong><p>Projects in library</p></div>
       <div class="panel"><strong>${publishedProjects().length}</strong><p>Published projects</p></div>
-      <div class="panel"><strong>${state.mediaItems.length}</strong><p>Uploaded media items</p></div>
+      <div class="panel"><strong>${projectAssetCount()}</strong><p>Project media files</p></div>
     </div>
     <div class="panel" style="margin-top:18px">
       <h3>Next useful edits</h3>
@@ -639,7 +654,7 @@ function projectForm(project) {
       ${textarea("Solution", "solution", data.solution)}
       ${textarea("Materials", "materials", data.materials)}
       ${textarea("Result", "result", data.result)}
-      ${projectUploadField("Project Gallery", "media", (data.media || []).join("\\n"), true)}
+      ${projectUploadField("Project Gallery", "media", (data.media || []).join("\n"), true)}
       <label class="checkbox-field"><input name="featured" type="checkbox" ${data.featured ? "checked" : ""}> Featured on homepage</label>
       <label class="checkbox-field"><input name="published" type="checkbox" ${data.published ? "checked" : ""}> Published on Work and Scroll sequence</label>
       <div class="admin-actions full">
@@ -647,23 +662,6 @@ function projectForm(project) {
         <button class="button ghost" type="button" data-cancel-edit>Cancel</button>
       </div>
     </form>
-  `;
-}
-
-function mediaAdmin() {
-  return `
-    <p class="eyebrow">Media</p>
-    <h1>Upload and reuse assets.</h1>
-    <div class="panel">
-      <div class="field">
-        <label for="mediaUpload">Add photos, plan images, PDFs, or videos</label>
-        <input id="mediaUpload" type="file" multiple accept="image/*,video/*,application/pdf">
-      </div>
-      <p class="micro">Files and portfolio content are stored on the server and shared across devices.</p>
-    </div>
-    <div class="media-library">
-      ${state.mediaItems.map(mediaTile).join("") || emptyState("No uploaded media yet.")}
-    </div>
   `;
 }
 
@@ -676,7 +674,7 @@ function contentAdmin() {
       ${textarea("Positioning Statement", "tagline", state.settings.tagline, true)}
       ${textarea("Intro / Who I Am", "intro", state.settings.intro, true)}
       ${textarea("Architecture Philosophy", "philosophy", state.settings.philosophy, true)}
-      ${textarea("Services, one per line as Title | Description", "services", state.services.map((item) => `${item.title} | ${item.text}`).join("\\n"))}
+      ${textarea("Services, one per line as Title | Description", "services", state.services.map((item) => `${item.title} | ${item.text}`).join("\n"))}
       <div class="admin-actions full"><button class="button accent" type="submit">Save Content</button></div>
     </form>
   `;
@@ -732,12 +730,14 @@ function bindAdmin() {
 
   const newProject = document.querySelector("[data-new-project]");
   if (newProject) newProject.addEventListener("click", () => {
+    discardPendingProjectUploads();
     editingProjectId = "new";
     renderAdmin();
   });
 
   document.querySelectorAll("[data-edit-project]").forEach((button) => {
     button.addEventListener("click", () => {
+      discardPendingProjectUploads();
       editingProjectId = button.dataset.editProject;
       renderAdmin();
     });
@@ -746,9 +746,12 @@ function bindAdmin() {
   document.querySelectorAll("[data-delete-project]").forEach((button) => {
     button.addEventListener("click", () => {
       const project = state.projects.find((item) => item.id === button.dataset.deleteProject);
-      askConfirm(`Delete ${project.title}?`, "This removes the project from the server portfolio.", () => {
+      if (!project) return;
+      askConfirm(`Delete ${project.title}?`, "This removes the project and cleans up uploaded files that are not used anywhere else.", () => {
+        const removedMedia = collectProjectMedia(project);
         state.projects = state.projects.filter((item) => item.id !== project.id);
         if (!saveState()) return;
+        cleanupUploadedFiles(removedMedia);
         showToast("Project deleted.");
         renderAdmin();
       });
@@ -766,21 +769,9 @@ function bindAdmin() {
   }
   const cancelEdit = document.querySelector("[data-cancel-edit]");
   if (cancelEdit) cancelEdit.addEventListener("click", () => {
+    discardPendingProjectUploads();
     editingProjectId = null;
     renderAdmin();
-  });
-
-  const mediaUpload = document.querySelector("#mediaUpload");
-  if (mediaUpload) mediaUpload.addEventListener("change", handleMediaUpload);
-
-  document.querySelectorAll("[data-delete-media]").forEach((button) => {
-    button.addEventListener("click", () => {
-      askConfirm("Delete media item?", "This removes the item from the server portfolio library.", () => {
-        state.mediaItems = state.mediaItems.filter((item) => item.id !== button.dataset.deleteMedia);
-        if (!saveState()) return;
-        renderAdmin();
-      });
-    });
   });
 
   const contentForm = document.querySelector("#contentForm");
@@ -860,6 +851,8 @@ function saveProjectFromForm(event) {
   const slug = slugify(String(form.get("slug") || title));
   const cover = String(form.get("cover") || "").trim();
   const summary = String(form.get("summary") || "").trim();
+  const existingProject = state.projects.find((item) => item.id === editingProjectId);
+  const previousMedia = existingProject ? collectProjectMedia(existingProject) : [];
   if (!title || !slug || !cover || !summary) {
     showToast("Title, slug, cover, and description are required.");
     return;
@@ -883,30 +876,16 @@ function saveProjectFromForm(event) {
     result: String(form.get("result") || ""),
     featured: form.get("featured") === "on",
     published: form.get("published") === "on",
-    media: String(form.get("media") || "").split(/\n+/).map((item) => item.trim()).filter(Boolean)
+    media: splitMediaSources(form.get("media"))
   };
   if (editingProjectId === "new") state.projects.unshift(project);
   else state.projects = state.projects.map((item) => item.id === project.id ? project : item);
   editingProjectId = null;
   if (!saveState()) return;
+  cleanupUploadedFiles(previousMedia);
+  pendingProjectUploads = new Set();
   showToast("Project saved.");
   renderAdmin();
-}
-
-function handleMediaUpload(event) {
-  uploadFilesToAssets([...event.target.files]).then((files) => {
-    files.forEach((file) => {
-      state.mediaItems.unshift({
-        id: `m-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        name: file.name,
-        type: file.type,
-        src: file.path
-      });
-    });
-    if (!saveState()) return;
-    showToast(`${files.length} media item${files.length === 1 ? "" : "s"} uploaded.`);
-    renderAdmin();
-  }).catch((error) => showToast(error.message));
 }
 
 function bindProjectUploadFields(form) {
@@ -916,6 +895,7 @@ function bindProjectUploadFields(form) {
   form.querySelectorAll("[data-media-source]").forEach((inputNode) => {
     inputNode.addEventListener("input", () => syncUploadPreview(inputNode));
   });
+  bindUploadPreviewControls(form);
 }
 
 function handleProjectUpload(inputNode) {
@@ -931,9 +911,10 @@ function handleProjectUpload(inputNode) {
 
   uploadFilesToAssets(files).then((uploaded) => {
     const sources = uploaded.map((file) => file.path);
+    sources.forEach((src) => pendingProjectUploads.add(src));
     if (inputNode.multiple) {
-      const existing = target.value.split(/\n+/).map((item) => item.trim()).filter(Boolean);
-      target.value = [...existing, ...sources].join("\n");
+      const existing = splitMediaSources(target.value);
+      target.value = uniqueMediaList([...existing.filter((src) => !isDemoMedia(src)), ...sources]).join("\n");
     } else {
       target.value = sources[0];
     }
@@ -945,8 +926,10 @@ function handleProjectUpload(inputNode) {
 function syncUploadPreview(inputNode) {
   const preview = document.querySelector(`[data-upload-preview="${inputNode.id}"]`);
   if (!preview) return;
-  const sources = inputNode.value.split(/\n+/).map((item) => item.trim()).filter(Boolean);
-  preview.innerHTML = sources.slice(0, 8).map((src, index) => mediaPreview(src, index)).join("") || `<span>No media selected yet.</span>`;
+  const sources = splitMediaSources(inputNode.value);
+  preview.innerHTML = sources.slice(0, 8).map((src, index) => mediaPreview(src, index, inputNode.id)).join("") || `<span class="upload-preview-item">No media selected yet.</span>`;
+  bindMediaFallbacks(preview);
+  bindUploadPreviewControls(preview);
 }
 
 async function uploadFilesToAssets(files) {
@@ -1002,12 +985,11 @@ function moveProject(id, direction) {
   renderAdmin();
 }
 
-function projectCard(project, index = 0) {
-  const size = index % 3 === 0 ? "wide" : index % 3 === 1 ? "narrow" : "";
+function projectCard(project) {
   const images = projectImages(project);
   const carouselAttr = images.length > 1 ? " data-carousel" : "";
   return `
-    <a class="project-card ${size}" href="#project/${project.slug}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
+    <a class="project-card" href="#project/${project.slug}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
       <figure class="project-cover ${images.length ? "" : "is-placeholder-only"}"${carouselAttr}>
         ${projectImageMarkup(project, images)}
       </figure>
@@ -1086,16 +1068,8 @@ function adminProjectCard(project, index) {
   `;
 }
 
-function mediaTile(item) {
-  const preview = item.type.startsWith("image/")
-    ? `<img src="${item.src}" alt="${escapeHtml(item.name)}">`
-    : item.type.startsWith("video/")
-      ? `<video src="${escapeAttr(item.src)}" muted playsinline controls></video>`
-      : `<a class="media-file" href="${escapeAttr(item.src)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.type || "file")}</span></a>`;
-  return `<article><div class="media-tile">${preview}</div><button class="button danger" type="button" data-delete-media="${item.id}">Delete</button></article>`;
-}
-
 function projectUploadField(label, name, value, multiple) {
+  const previewSources = multiple ? splitMediaSources(value) : uniqueMediaList([value]);
   const inputType = multiple ? "textarea" : "input";
   const field = inputType === "textarea"
     ? `<textarea id="${name}" name="${name}" data-media-source>${escapeHtml(value)}</textarea>`
@@ -1105,7 +1079,7 @@ function projectUploadField(label, name, value, multiple) {
       <label for="${name}">${label}</label>
       <div class="upload-shell">
         <div class="upload-preview" data-upload-preview="${name}">
-          ${(multiple ? String(value).split(/\n+/).filter(Boolean) : [value].filter(Boolean)).slice(0, 8).map((src, index) => mediaPreview(src, index)).join("") || `<span>No media selected yet.</span>`}
+          ${previewSources.slice(0, 8).map((src, index) => mediaPreview(src, index, name)).join("") || `<span class="upload-preview-item">No media selected yet.</span>`}
         </div>
         <label class="upload-button">
           <span>${multiple ? "Upload Gallery Images / Videos" : "Upload Cover Image"}</span>
@@ -1120,11 +1094,16 @@ function projectUploadField(label, name, value, multiple) {
   `;
 }
 
-function mediaPreview(src, index = 0) {
-  if (isVideoSrc(src)) return `<video src="${escapeAttr(src)}" muted playsinline></video>`;
-  if (isImageSrc(src)) return `<img src="${escapeAttr(src)}" alt="Selected media ${index + 1}">`;
-  if (isPdfSrc(src)) return `<span>PDF ${index + 1}</span>`;
-  return `<span>${escapeHtml(src.slice(0, 80))}</span>`;
+function mediaPreview(src, index = 0, sourceName = "") {
+  const removeButton = sourceName
+    ? `<button class="upload-remove" type="button" data-remove-media-source="${escapeAttr(sourceName)}" data-remove-media-index="${index}" aria-label="Remove media ${index + 1}">&times;</button>`
+    : "";
+  if (isVideoSrc(src)) return `<span class="upload-preview-item media-preview-frame"><video src="${escapeAttr(src)}" muted playsinline></video>${removeButton}</span>`;
+  if (isImageSrc(src)) {
+    return `<span class="upload-preview-item media-preview-frame"><img src="${escapeAttr(src)}" alt="Selected media ${index + 1}" data-media-fallback><span class="media-fallback">Media unavailable</span>${removeButton}</span>`;
+  }
+  if (isPdfSrc(src)) return `<span class="upload-preview-item media-preview-frame">PDF ${index + 1}${removeButton}</span>`;
+  return `<span class="upload-preview-item media-preview-frame">${escapeHtml(src.slice(0, 80))}${removeButton}</span>`;
 }
 
 function projectImageMarkup(project, images, speed = "") {
@@ -1144,8 +1123,91 @@ function projectImages(project) {
       if (seen.has(src)) return false;
       seen.add(src);
       return true;
-    });
+  });
   return images;
+}
+
+function collectProjectMedia(project) {
+  if (!project) return [];
+  return uniqueMediaList([project.cover, ...(project.media || [])]);
+}
+
+function referencedProjectMedia() {
+  return new Set(state.projects.flatMap((project) => collectProjectMedia(project)));
+}
+
+function cleanupUploadedFiles(candidates) {
+  const stillUsed = referencedProjectMedia();
+  const paths = uniqueMediaList(candidates)
+    .filter(isUploadedAsset)
+    .filter((src) => !stillUsed.has(src));
+  if (!paths.length) return;
+
+  stateSaveQueue = stateSaveQueue
+    .then(() => deleteUploadedFiles(paths))
+    .catch((error) => {
+      console.error(error);
+      showToast(error.message || "Could not delete unused uploaded files.");
+    });
+}
+
+function discardPendingProjectUploads() {
+  const pending = [...pendingProjectUploads];
+  pendingProjectUploads = new Set();
+  cleanupUploadedFiles(pending);
+}
+
+async function deleteUploadedFiles(paths) {
+  const response = await fetch("/api/upload", {
+    method: "DELETE",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      paths
+    })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    adminAuthenticated = false;
+    throw new Error("Admin session expired. Log in again.");
+  }
+  if (!response.ok) {
+    throw new Error(result.error || "Could not delete uploaded files.");
+  }
+  return result.deleted || [];
+}
+
+function bindUploadPreviewControls(root = document) {
+  root.querySelectorAll("[data-remove-media-source]").forEach((button) => {
+    if (button.dataset.removeBound) return;
+    button.dataset.removeBound = "true";
+    button.addEventListener("click", () => {
+      const target = document.getElementById(button.dataset.removeMediaSource);
+      if (!target) return;
+      const sources = splitMediaSources(target.value);
+      const index = Number(button.dataset.removeMediaIndex);
+      if (!Number.isInteger(index) || index < 0 || index >= sources.length) return;
+      const [removed] = sources.splice(index, 1);
+      target.value = sources.join("\n");
+      syncUploadPreview(target);
+      if (pendingProjectUploads.has(removed)) {
+        pendingProjectUploads.delete(removed);
+        cleanupUploadedFiles([removed]);
+      }
+      showToast("Media removed. Save the project to apply.");
+    });
+  });
+}
+
+function bindMediaFallbacks(root = document) {
+  root.querySelectorAll("img[data-media-fallback], .project-cover img, .gallery-item img, .admin-card > img").forEach((image) => {
+    if (image.dataset.fallbackBound) return;
+    image.dataset.fallbackBound = "true";
+    image.addEventListener("error", () => {
+      image.classList.add("is-broken");
+    });
+  });
 }
 
 function projectGallery(project) {
@@ -1177,6 +1239,31 @@ function isBrowserStoredMedia(src = "") {
   return /^data:(image|video|application\/pdf)\//.test(src);
 }
 
+function isDemoMedia(src = "") {
+  return demoMediaPaths.has(src);
+}
+
+function isUploadedAsset(src = "") {
+  return /^assets\/uploads\/[^?#]+/i.test(src);
+}
+
+function uniqueMediaList(items) {
+  const seen = new Set();
+  const output = [];
+  items.forEach((item) => {
+    const value = String(item || "").trim();
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    output.push(value);
+  });
+  return output;
+}
+
+function splitMediaSources(input) {
+  const items = Array.isArray(input) ? input : [input];
+  return uniqueMediaList(items.flatMap((item) => String(item || "").split(/(?:\r?\n|\\n)+/)));
+}
+
 function servicesSection() {
   return `
     <section class="section container">
@@ -1190,10 +1277,6 @@ function servicesSection() {
 
 function serviceRow(service, index) {
   return `<article class="service"><span class="service-number">${String(index + 1).padStart(2, "0")}</span><div><h3>${escapeHtml(service.title)}</h3><p>${escapeHtml(service.text)}</p></div></article>`;
-}
-
-function contactCta() {
-  return `<section class="container section">${contactPanel()}</section>`;
 }
 
 function contactPanel() {

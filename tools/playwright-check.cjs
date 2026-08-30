@@ -79,14 +79,99 @@ async function hasPureWhiteTheme(page) {
       background,
       beforeDisplay: before.display,
       beforeOpacity: before.opacity,
+      brandMarkCount: document.querySelectorAll(".brand-mark").length,
       backgroundTextCount: document.querySelectorAll("[data-scene-label], .scene-label").length,
       statsCount: document.querySelectorAll(".stats-strip").length
     };
   });
   if (theme.background !== "rgb(255, 255, 255)") throw new Error(`Homepage background is not pure white: ${theme.background}.`);
   if (theme.beforeDisplay !== "none" && Number(theme.beforeOpacity) > 0) throw new Error("Body pseudo-background is still visible.");
+  if (theme.brandMarkCount !== 0) throw new Error("Navbar brand mark should be removed.");
   if (theme.backgroundTextCount !== 0) throw new Error("Decorative background text should be removed.");
   if (theme.statsCount !== 0) throw new Error("Stats strip should be removed from the homepage.");
+}
+
+async function hasMinimalProjectCards(page) {
+  const cardStyles = await page.evaluate(() => {
+    const card = document.querySelector(".project-card");
+    const cover = document.querySelector(".project-cover");
+    const mediaBackgrounds = [...document.querySelectorAll(".media-frame, .project-cover, .gallery-item")]
+      .map((node) => getComputedStyle(node).backgroundImage);
+    if (!card || !cover) return null;
+    return {
+      borderTopWidth: getComputedStyle(card).borderTopWidth,
+      coverShadow: getComputedStyle(cover).boxShadow,
+      mediaBackgrounds
+    };
+  });
+  if (!cardStyles) throw new Error("Project card was not found.");
+  if (cardStyles.borderTopWidth !== "0px") throw new Error("Project cards should not have top borders.");
+  if (cardStyles.coverShadow !== "none") throw new Error("Project covers should not have boxed shadows.");
+  if (cardStyles.mediaBackgrounds.some((background) => background.includes("project-courtyard"))) {
+    throw new Error("Media containers should not use a project image as a CSS fallback background.");
+  }
+}
+
+async function hasMeasuredHeadlines(page, viewport) {
+  const sizes = await page.evaluate(() => ({
+    brand: parseFloat(getComputedStyle(document.querySelector(".brand")).fontSize),
+    heroHeading: parseFloat(getComputedStyle(document.querySelector(".hero h1")).fontSize),
+    storyHeading: parseFloat(getComputedStyle(document.querySelector(".story-pin h2")).fontSize)
+  }));
+  if (sizes.brand < 16) {
+    throw new Error(`Brand text is too small after logo removal: ${sizes.brand}px.`);
+  }
+  if (viewport.width <= 560 && sizes.heroHeading > 46) {
+    throw new Error(`Mobile hero headline is too large: ${sizes.heroHeading}px.`);
+  }
+  if (viewport.width >= 1400 && sizes.heroHeading > 82) {
+    throw new Error(`Desktop hero headline is too large: ${sizes.heroHeading}px.`);
+  }
+  if (viewport.width >= 1400 && sizes.storyHeading > 56) {
+    throw new Error(`Desktop story headline is too large: ${sizes.storyHeading}px.`);
+  }
+}
+
+async function hasMobileGutters(page, selectors, minimum = 22) {
+  const failures = await page.evaluate(({ selectors, minimum }) => {
+    return selectors.flatMap((selector) => {
+      const node = document.querySelector(selector);
+      if (!node) return [`${selector} not found`];
+      const rect = node.getBoundingClientRect();
+      const width = window.innerWidth;
+      const left = Math.round(rect.left);
+      const right = Math.round(rect.right);
+      if (left < minimum || right > width - minimum) {
+        return [`${selector} has weak mobile gutter: left ${left}, right ${right}, width ${width}`];
+      }
+      return [];
+    });
+  }, { selectors, minimum });
+  if (failures.length) throw new Error(failures.join("; "));
+}
+
+async function hasEqualWorkGridImages(page) {
+  const geometry = await page.evaluate(() => {
+    const covers = [...document.querySelectorAll(".project-grid .project-cover")].slice(0, 2);
+    return covers.map((cover) => {
+      const rect = cover.getBoundingClientRect();
+      const card = cover.closest(".project-card");
+      return {
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        gridColumnEnd: getComputedStyle(card).gridColumnEnd,
+        marginTop: getComputedStyle(card).marginTop
+      };
+    });
+  });
+  if (geometry.length < 2) throw new Error("Expected at least two project covers for equal-size comparison.");
+  const [first, second] = geometry;
+  if (Math.abs(first.width - second.width) > 1 || Math.abs(first.height - second.height) > 1) {
+    throw new Error(`Project covers are not equal size: ${JSON.stringify(geometry)}.`);
+  }
+  if (first.gridColumnEnd !== second.gridColumnEnd || second.marginTop !== "0px") {
+    throw new Error(`Project cards still have uneven masonry sizing: ${JSON.stringify(geometry)}.`);
+  }
 }
 
 async function resetLocalState(page) {
@@ -130,6 +215,20 @@ async function pathExists(filePath) {
   }
 }
 
+async function waitForPathsRemoved(paths) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const existing = [];
+    for (const src of paths) {
+      const absolute = path.join(process.cwd(), src);
+      if (await pathExists(absolute)) existing.push(src);
+    }
+    if (!existing.length) return;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  throw new Error(`Uploaded files were not deleted from disk: ${paths.join(", ")}.`);
+}
+
 (async () => {
   await removeChromiumDebugLog();
   await fs.mkdir(outDir, { recursive: true });
@@ -151,6 +250,11 @@ async function pathExists(filePath) {
       await visibleText(page, "Selected Work");
       await hasNoHorizontalScroll(page);
       await hasPureWhiteTheme(page);
+      await hasMinimalProjectCards(page);
+      await hasMeasuredHeadlines(page, viewport);
+      if (viewport.width <= 560) {
+        await hasMobileGutters(page, [".brand", ".hero h1", ".hero .lede", ".hero-actions"]);
+      }
       await page.screenshot({ path: path.join(outDir, `${viewport.name}-home.png`), fullPage: true });
     });
     await page.close();
@@ -186,10 +290,27 @@ async function pathExists(filePath) {
   await waitForIntro(page);
   await resetLocalState(page);
 
+  const aboutMobilePage = await browser.newPage({ viewport: { width: 375, height: 900 } });
+  await check("mobile about page is profile-only", async () => {
+    await aboutMobilePage.goto(`${baseUrl}/#about`, { waitUntil: "domcontentloaded" });
+    await waitForIntro(aboutMobilePage);
+    await visibleText(aboutMobilePage, "A practice shaped by observation");
+    await visibleText(aboutMobilePage, "What I Bring");
+    await visibleText(aboutMobilePage, "Every project starts with a sentence");
+    if (await aboutMobilePage.locator("#contactForm").count()) {
+      throw new Error("About page should not render the contact form.");
+    }
+    await hasNoHorizontalScroll(aboutMobilePage);
+    await hasMobileGutters(aboutMobilePage, [".brand", ".about-head h1", ".about-head .lede", ".about-note", ".about-achievements", ".about-statement h2", ".about-statement .lede"]);
+    await aboutMobilePage.screenshot({ path: path.join(outDir, "mobile-about.png"), fullPage: true });
+  });
+  await aboutMobilePage.close();
+
   await check("work page filters", async () => {
     await page.goto(`${baseUrl}/#work`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await visibleText(page, "Selected projects and spatial studies");
+    await hasEqualWorkGridImages(page);
     await page.getByRole("button", { name: "Interior" }).click();
     await visibleText(page, "Stone Apartment");
     await hasNoHorizontalScroll(page);
@@ -221,8 +342,14 @@ async function pathExists(filePath) {
     await waitForIntro(page);
     await page.locator("#loginEmail").fill("studio@example.com");
     await page.locator("#loginPassword").fill("architect2026");
-  await page.getByRole("button", { name: "Log In" }).click();
+    await page.getByRole("button", { name: "Log In" }).click();
     await visibleText(page, "Manage the portfolio");
+    if (await page.locator("[data-admin-tab='media']").count()) {
+      throw new Error("Admin should not expose a separate Media tab.");
+    }
+    if (await page.getByText("Uploaded media items").count()) {
+      throw new Error("Dashboard should not show the removed media-library metric.");
+    }
     await page.locator("[data-admin-tab='settings']").click();
     await page.locator("#siteName").fill("Atelier Test");
     await page.locator("#contactEmail").fill("test@example.com");
@@ -241,6 +368,18 @@ async function pathExists(filePath) {
   await check("admin create and delete project", async () => {
     await page.getByRole("button", { name: "Projects" }).click();
     const expectedStoryCards = (await portfolioState(page)).projects.filter((item) => item.published).length + 1;
+    await page.locator("[data-edit-project]").first().click();
+    await visibleText(page, "Edit Project");
+    await page.locator("[data-project-upload='#media']").setInputFiles(path.join(process.cwd(), "assets", "project-facade.png"));
+    await page.waitForFunction(() => {
+      const value = document.querySelector("#media")?.value || "";
+      return value.startsWith("assets/uploads/") && !value.includes("assets/project-");
+    });
+    const transientUpload = await page.locator("#media").inputValue();
+    transientUpload.split(/\n+/).filter((src) => src.startsWith("assets/uploads/")).forEach((src) => {
+      uploadedFilesToClean.add(path.join(process.cwd(), src));
+    });
+    await page.locator("[data-cancel-edit]").click();
     await page.getByRole("button", { name: "New Project" }).click();
     await page.locator("#title").fill("Playwright Test House");
     await page.locator("#slug").fill("playwright-test-house");
@@ -254,6 +393,13 @@ async function pathExists(filePath) {
     await page.waitForFunction(() => {
       const value = document.querySelector("#media")?.value || "";
       return value.split(/\n+/).filter((item) => item.startsWith("assets/uploads/")).length >= 2;
+    });
+    const firstGalleryUpload = await page.evaluate(() => (document.querySelector("#media")?.value || "").split(/\n+/).filter(Boolean)[0]);
+    await page.locator("[data-remove-media-source='media']").first().click();
+    uploadedFilesToClean.add(path.join(process.cwd(), firstGalleryUpload));
+    await page.waitForFunction(() => {
+      const value = document.querySelector("#media")?.value || "";
+      return value.split(/\n+/).filter((item) => item.startsWith("assets/uploads/")).length === 1;
     });
     await page.locator("#summary").fill("A temporary project created during automated validation.");
     await page.locator("input[name='published']").check();
@@ -290,16 +436,18 @@ async function pathExists(filePath) {
     await visibleText(page, "Confirm Action");
     await page.locator(".confirm-dialog [data-confirm-ok]").click();
     await visibleText(page, "Project deleted");
+    await waitForPathsRemoved(uploadedPaths);
   });
 
   await check("project hover carousel cycles and returns", async () => {
     await page.goto(`${baseUrl}/#work`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await visibleText(page, "Selected projects and spatial studies");
-    const card = page.locator(".project-card").first();
+    const card = page.locator(".project-card", { has: page.locator("[data-carousel]") }).first();
+    await card.waitFor({ state: "visible", timeout: 5000 });
     const firstSrc = await card.locator(".carousel-image").first().getAttribute("src");
     await card.hover();
-    await page.waitForTimeout(2200);
+    await page.waitForTimeout(900);
     const activeSrc = await card.locator(".carousel-image.active").first().getAttribute("src");
     if (activeSrc === firstSrc) throw new Error("Carousel did not change image on hover.");
     await page.mouse.move(10, 10);

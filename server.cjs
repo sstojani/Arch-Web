@@ -127,6 +127,40 @@ async function handleUpload(request, response) {
   }
 }
 
+function uploadedFilePath(uploadPath) {
+  if (typeof uploadPath !== "string" || !uploadPath.startsWith("assets/uploads/")) {
+    return null;
+  }
+
+  const filePath = path.resolve(root, uploadPath);
+  const relative = path.relative(uploadDir, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return null;
+  }
+
+  return filePath;
+}
+
+async function handleDeleteUploads(request, response) {
+  try {
+    const raw = (await readRequestBody(request)).toString("utf8");
+    const body = raw ? JSON.parse(raw) : {};
+    const paths = Array.isArray(body.paths) ? body.paths : [];
+    const deleted = [];
+
+    for (const uploadPath of [...new Set(paths)]) {
+      const filePath = uploadedFilePath(uploadPath);
+      if (!filePath) continue;
+      await fs.rm(filePath, { force: true });
+      deleted.push(uploadPath);
+    }
+
+    sendJson(response, 200, { deleted });
+  } catch (error) {
+    sendJson(response, 400, { error: error.message });
+  }
+}
+
 async function serveStatic(request, response) {
   const url = new URL(request.url, `http://${request.headers.host || `${host}:${port}`}`);
   const requestedPath = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
@@ -175,7 +209,7 @@ const server = http.createServer((request, response) => {
     return;
   }
 
-  if (request.method === "POST" && request.url?.startsWith("/api/upload")) {
+  if ((request.method === "POST" || request.method === "DELETE") && request.url?.startsWith("/api/upload")) {
     if (!serverState.isAuthenticated(request)) {
       sendJson(response, 401, {
         error: "Admin authentication required."
@@ -183,7 +217,8 @@ const server = http.createServer((request, response) => {
       return;
     }
 
-    handleUpload(request, response);
+    if (request.method === "POST") handleUpload(request, response);
+    else handleDeleteUploads(request, response);
     return;
   }
   if (request.method === "GET" || request.method === "HEAD") {
