@@ -473,7 +473,7 @@ function renderProject(slug) {
   const related = publishedProjects().filter((item) => item.id !== project.id).slice(0, 2);
   page(`
     <section class="project-detail-hero media-frame">
-      <img class="parallax-media" src="${project.cover}" alt="${escapeHtml(project.title)} hero image">
+      ${projectHeroMedia(project)}
     </section>
     <section class="container detail-layout">
       <aside class="meta-list" aria-label="Project metadata">
@@ -1098,7 +1098,7 @@ function mediaPreview(src, index = 0, sourceName = "") {
   const removeButton = sourceName
     ? `<button class="upload-remove" type="button" data-remove-media-source="${escapeAttr(sourceName)}" data-remove-media-index="${index}" aria-label="Remove media ${index + 1}">&times;</button>`
     : "";
-  if (isVideoSrc(src)) return `<span class="upload-preview-item media-preview-frame"><video src="${escapeAttr(src)}" muted playsinline></video>${removeButton}</span>`;
+  if (isVideoSrc(src)) return `<span class="upload-preview-item media-preview-frame"><video src="${escapeAttr(src)}" controls muted playsinline preload="metadata"></video>${removeButton}</span>`;
   if (isImageSrc(src)) {
     return `<span class="upload-preview-item media-preview-frame"><img src="${escapeAttr(src)}" alt="Selected media ${index + 1}" data-media-fallback><span class="media-fallback">Media unavailable</span>${removeButton}</span>`;
   }
@@ -1111,6 +1111,9 @@ function projectImageMarkup(project, images, speed = "") {
   return images.map((src, imageIndex) => {
     const speedAttr = speed ? ` data-speed="${speed}"` : "";
     const loading = imageIndex === 0 ? "eager" : "lazy";
+    if (isVideoSrc(src)) {
+      return `<video class="carousel-image ${imageIndex === 0 ? "active" : ""}"${speedAttr} src="${escapeAttr(src)}" muted playsinline loop preload="metadata" aria-label="${escapeHtml(project.title)} project video ${imageIndex + 1}"></video>`;
+    }
     return `<img class="carousel-image ${imageIndex === 0 ? "active" : ""}"${speedAttr} src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} project thumbnail ${imageIndex + 1}" loading="${loading}" decoding="async">`;
   }).join("");
 }
@@ -1118,7 +1121,7 @@ function projectImageMarkup(project, images, speed = "") {
 function projectImages(project) {
   const seen = new Set();
   const images = [project.cover, ...(project.media || [])]
-    .filter((src) => src && isImageSrc(src))
+    .filter((src) => src && (isImageSrc(src) || isVideoSrc(src)))
     .filter((src) => {
       if (seen.has(src)) return false;
       seen.add(src);
@@ -1214,13 +1217,20 @@ function projectGallery(project) {
   const media = project.media && project.media.length ? project.media : [project.cover];
   return media.map((src, index) => {
     if (isVideoSrc(src)) {
-      return `<figure class="gallery-item"><video src="${escapeAttr(src)}" controls muted playsinline aria-label="${escapeHtml(project.title)} video ${index + 1}"></video></figure>`;
+      return `<figure class="gallery-item"><video src="${escapeAttr(src)}" controls muted playsinline preload="metadata" aria-label="${escapeHtml(project.title)} video ${index + 1}"></video></figure>`;
     }
     if (isImageSrc(src)) {
       return `<figure class="gallery-item"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} gallery image ${index + 1}"></figure>`;
     }
     return `<figure class="gallery-item gallery-file"><a class="button ghost" href="${escapeAttr(src)}" target="_blank" rel="noreferrer">Open media ${index + 1}</a></figure>`;
   }).join("");
+}
+
+function projectHeroMedia(project) {
+  if (isVideoSrc(project.cover)) {
+    return `<video class="parallax-media" src="${escapeAttr(project.cover)}" controls muted playsinline preload="metadata" aria-label="${escapeHtml(project.title)} hero video"></video>`;
+  }
+  return `<img class="parallax-media" src="${escapeAttr(project.cover)}" alt="${escapeHtml(project.title)} hero image">`;
 }
 
 function isImageSrc(src = "") {
@@ -1338,7 +1348,7 @@ function bindReveal() {
 
 function bindParallax() {
   if (parallaxCleanup) parallaxCleanup();
-  const elements = document.querySelectorAll(".parallax-media, .depth-layer, .project-cover img, .gallery-item img, .cover-plate, .cinema-plane");
+  const elements = document.querySelectorAll(".parallax-media, .depth-layer, .project-cover img, .project-cover video, .gallery-item img, .gallery-item video, .cover-plate, .cinema-plane");
   if (prefersReducedMotion()) {
     if (scrollProgress) scrollProgress.style.transform = "scaleX(0)";
     return;
@@ -1551,20 +1561,20 @@ function bindStoryScroll() {
 function bindTiltCards() {
   if (prefersReducedMotion() || window.matchMedia("(max-width: 900px)").matches) return;
   document.querySelectorAll(".project-card").forEach((card) => {
-    const image = card.querySelector(".project-cover img.active") || card.querySelector(".project-cover img");
+    const image = card.querySelector(".project-cover .carousel-image.active") || card.querySelector(".project-cover .carousel-image");
     if (!image) return;
     card.addEventListener("pointermove", (event) => {
       const rect = card.getBoundingClientRect();
       const x = (event.clientX - rect.left) / rect.width - 0.5;
       const y = (event.clientY - rect.top) / rect.height - 0.5;
-      card.querySelectorAll(".project-cover img.active").forEach((activeImage) => {
+      card.querySelectorAll(".project-cover .carousel-image.active").forEach((activeImage) => {
         activeImage.style.transform = `translate3d(${x * -18}px, ${y * -16}px, 0) scale(1.13)`;
       });
       card.style.setProperty("--tilt-x", `${y * -2.5}deg`);
       card.style.setProperty("--tilt-y", `${x * 2.5}deg`);
     });
     card.addEventListener("pointerleave", () => {
-      card.querySelectorAll(".project-cover img").forEach((item) => {
+      card.querySelectorAll(".project-cover .carousel-image").forEach((item) => {
         item.style.transform = "";
       });
       card.style.removeProperty("--tilt-x");
@@ -1591,6 +1601,10 @@ function bindProjectCarousels() {
       images.forEach((image, imageIndex) => {
         image.classList.toggle("active", imageIndex === index);
         image.style.transform = "";
+        if (image.tagName === "VIDEO") {
+          if (imageIndex === index) image.play().catch(() => {});
+          else image.pause();
+        }
       });
     };
 
@@ -1608,6 +1622,12 @@ function bindProjectCarousels() {
       window.clearTimeout(firstTimer);
       timer = null;
       firstTimer = null;
+      images.forEach((image) => {
+        if (image.tagName === "VIDEO") {
+          image.pause();
+          image.currentTime = 0;
+        }
+      });
       show(0);
       carousel.classList.add("is-returning");
       window.setTimeout(() => carousel.classList.remove("is-returning"), returnDuration);

@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const fileSystem = require("fs");
 const fs = require("fs/promises");
 const http = require("http");
 const path = require("path");
@@ -24,10 +25,30 @@ const types = {
   ".webp": "image/webp",
   ".avif": "image/avif",
   ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
   ".webm": "video/webm",
   ".mov": "video/quicktime",
+  ".ogv": "video/ogg",
+  ".ogg": "video/ogg",
   ".pdf": "application/pdf"
 };
+
+const uploadExtensions = new Set([
+  ".avif",
+  ".gif",
+  ".jpeg",
+  ".jpg",
+  ".m4v",
+  ".mov",
+  ".mp4",
+  ".ogv",
+  ".ogg",
+  ".pdf",
+  ".png",
+  ".svg",
+  ".webm",
+  ".webp"
+]);
 
 function send(response, status, body, headers = {}) {
   response.writeHead(status, headers);
@@ -109,7 +130,7 @@ async function handleUpload(request, response) {
 
     const files = [];
     for (const part of parts) {
-      if (!/^(image|video)\//.test(part.type) && part.type !== "application/pdf") continue;
+      if (!isAllowedUpload(part)) continue;
       const filename = safeName(part.filename);
       const destination = path.join(uploadDir, filename);
       await fs.writeFile(destination, part.body);
@@ -125,6 +146,11 @@ async function handleUpload(request, response) {
   } catch (error) {
     sendJson(response, 500, { error: error.message });
   }
+}
+
+function isAllowedUpload(part) {
+  const ext = path.extname(part.filename || "").toLowerCase();
+  return /^(image|video)\//.test(part.type) || part.type === "application/pdf" || uploadExtensions.has(ext);
 }
 
 function uploadedFilePath(uploadPath) {
@@ -188,20 +214,65 @@ async function serveStatic(request, response) {
   }
 
   try {
-    const data = await fs.readFile(filePath);
     const type = types[path.extname(filePath).toLowerCase()] || "application/octet-stream";
+    const stats = await fs.stat(filePath);
+
+    if (request.headers.range && type.startsWith("video/")) {
+      serveRange(request, response, filePath, stats.size, type);
+      return;
+    }
+
+    const data = request.method === "HEAD" ? Buffer.alloc(0) : await fs.readFile(filePath);
     send(
       response,
       200,
-      request.method === "HEAD" ? Buffer.alloc(0) : data,
+      data,
       {
         "content-type": type,
+        "content-length": stats.size,
+        ...(type.startsWith("video/") ? { "accept-ranges": "bytes" } : {}),
         "cache-control": "no-store"
       }
     );
   } catch {
     send(response, 404, "Not found");
   }
+}
+
+function serveRange(request, response, filePath, size, type) {
+  const range = String(request.headers.range || "");
+  const match = range.match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) {
+    send(response, 416, "Requested Range Not Satisfiable", {
+      "content-range": `bytes */${size}`
+    });
+    return;
+  }
+
+  const start = match[1] ? Number(match[1]) : 0;
+  const end = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start > end || start >= size) {
+    send(response, 416, "Requested Range Not Satisfiable", {
+      "content-range": `bytes */${size}`
+    });
+    return;
+  }
+
+  const boundedEnd = Math.min(end, size - 1);
+  response.writeHead(206, {
+    "content-type": type,
+    "content-length": boundedEnd - start + 1,
+    "content-range": `bytes ${start}-${boundedEnd}/${size}`,
+    "accept-ranges": "bytes",
+    "cache-control": "no-store"
+  });
+
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+
+  fileSystem.createReadStream(filePath, { start, end: boundedEnd }).pipe(response);
 }
 
 const server = http.createServer((request, response) => {

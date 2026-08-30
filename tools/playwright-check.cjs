@@ -229,6 +229,59 @@ async function waitForPathsRemoved(paths) {
   throw new Error(`Uploaded files were not deleted from disk: ${paths.join(", ")}.`);
 }
 
+async function createTestVideoFile(page) {
+  const result = await page.evaluate(async () => {
+    if (!("MediaRecorder" in window)) throw new Error("MediaRecorder is not available in this browser.");
+    const canvas = document.createElement("canvas");
+    canvas.width = 96;
+    canvas.height = 54;
+    const context = canvas.getContext("2d");
+    const stream = canvas.captureStream(12);
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+      ? "video/webm;codecs=vp8"
+      : "video/webm";
+    const chunks = [];
+    const recorder = new MediaRecorder(stream, { mimeType });
+    const stopped = new Promise((resolve) => {
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data);
+      };
+      recorder.onstop = resolve;
+    });
+
+    let frame = 0;
+    const drawFrame = () => {
+      context.fillStyle = frame % 2 ? "#c65c2e" : "#f6f7f4";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#20231c";
+      context.fillRect(12 + frame * 3, 18, 26, 18);
+      frame += 1;
+    };
+
+    recorder.start();
+    const timer = setInterval(drawFrame, 80);
+    await new Promise((resolve) => setTimeout(resolve, 720));
+    clearInterval(timer);
+    drawFrame();
+    recorder.stop();
+    await stopped;
+    stream.getTracks().forEach((track) => track.stop());
+
+    const buffer = await new Blob(chunks, { type: "video/webm" }).arrayBuffer();
+    return Array.from(new Uint8Array(buffer));
+  });
+
+  return {
+    name: "playwright-test-video.webm",
+    mimeType: "video/webm",
+    buffer: Buffer.from(result)
+  };
+}
+
+function isVideoPath(src = "") {
+  return /\.(m4v|mov|mp4|ogg|ogv|webm)(\?.*)?$/i.test(src);
+}
+
 (async () => {
   await removeChromiumDebugLog();
   await fs.mkdir(outDir, { recursive: true });
@@ -386,10 +439,13 @@ async function waitForPathsRemoved(paths) {
     await page.locator("#location").fill("Test City");
     await page.locator("[data-project-upload='#cover']").setInputFiles(path.join(process.cwd(), "assets", "project-courtyard.png"));
     await page.waitForFunction(() => document.querySelector("#cover")?.value.startsWith("assets/uploads/"));
-    await page.locator("[data-project-upload='#media']").setInputFiles([
-      path.join(process.cwd(), "assets", "project-interior.png"),
-      path.join(process.cwd(), "assets", "project-plan.png")
-    ]);
+    const testVideo = await createTestVideoFile(page);
+    await page.locator("[data-project-upload='#media']").setInputFiles(path.join(process.cwd(), "assets", "project-interior.png"));
+    await page.waitForFunction(() => {
+      const value = document.querySelector("#media")?.value || "";
+      return value.split(/\n+/).filter((item) => item.startsWith("assets/uploads/")).length >= 1;
+    });
+    await page.locator("[data-project-upload='#media']").setInputFiles(testVideo);
     await page.waitForFunction(() => {
       const value = document.querySelector("#media")?.value || "";
       return value.split(/\n+/).filter((item) => item.startsWith("assets/uploads/")).length >= 2;
@@ -418,6 +474,16 @@ async function waitForPathsRemoved(paths) {
     if (JSON.stringify(uploadedPaths).includes("data:image")) {
       throw new Error("Uploaded project media was saved in browser storage.");
     }
+    const uploadedVideo = uploadedPaths.find(isVideoPath);
+    if (!uploadedVideo) throw new Error("Uploaded video was not saved with the project.");
+    const rangeResponse = await fetch(`${baseUrl}/${uploadedVideo}`, {
+      headers: {
+        range: "bytes=0-31"
+      }
+    });
+    if (rangeResponse.status !== 206) {
+      throw new Error(`Video uploads should support range playback requests, got HTTP ${rangeResponse.status}.`);
+    }
     for (const src of uploadedPaths) {
       const absolute = path.join(process.cwd(), src);
       if (!await pathExists(absolute)) throw new Error(`Uploaded file missing on disk: ${src}`);
@@ -429,6 +495,31 @@ async function waitForPathsRemoved(paths) {
     await page.locator("[data-story-card]").first().waitFor({ state: "attached", timeout: 5000 });
     const storyCards = await page.locator("[data-story-card]").count();
     if (storyCards !== expectedStoryCards) throw new Error(`Expected ${expectedStoryCards} story cards after creating a project, found ${storyCards}.`);
+    await page.goto(`${baseUrl}/#project/playwright-test-house`, { waitUntil: "domcontentloaded" });
+    await waitForIntro(page);
+    const detailVideo = page.locator(".gallery video").first();
+    await detailVideo.waitFor({ state: "visible", timeout: 5000 });
+    const playback = await detailVideo.evaluate(async (video) => {
+      video.muted = true;
+      try {
+        await video.play();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        return {
+          paused: video.paused,
+          readyState: video.readyState,
+          error: video.error?.message || null
+        };
+      } catch (error) {
+        return {
+          paused: video.paused,
+          readyState: video.readyState,
+          error: error.message
+        };
+      }
+    });
+    if (playback.error || playback.paused || playback.readyState < 2) {
+      throw new Error(`Uploaded video did not play in the project gallery: ${JSON.stringify(playback)}.`);
+    }
     await page.goto(`${baseUrl}/#admin`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
     await page.locator("[data-admin-tab='projects']").click();

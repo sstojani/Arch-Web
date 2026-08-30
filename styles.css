@@ -577,8 +577,11 @@ h3 {
 }
 
 .hero-media img,
+.hero-media video,
 .project-cover img,
-.gallery-item img {
+.project-cover video,
+.gallery-item img,
+.gallery-item video {
   color: transparent;
   filter: brightness(0.98) contrast(1.08) saturate(0.98);
   height: 100%;
@@ -587,7 +590,8 @@ h3 {
   width: 100%;
 }
 
-.hero-media img {
+.hero-media img,
+.hero-media video {
   height: calc(100% + 170px);
   min-height: 100%;
   position: relative;
@@ -909,7 +913,8 @@ h3 {
   max-height: clamp(300px, 50vh, 500px);
 }
 
-.story-card .project-cover img {
+.story-card .project-cover img,
+.story-card .project-cover video {
   transform: scale(1.04);
 }
 
@@ -1124,7 +1129,9 @@ h3 {
 }
 
 .project-card img,
-.gallery-item img {
+.project-card video,
+.gallery-item img,
+.gallery-item video {
   will-change: transform;
   transition: transform 900ms var(--ease), filter 900ms var(--ease);
 }
@@ -1365,6 +1372,7 @@ h3 {
 }
 
 .gallery-item video {
+  background: #000000;
   height: 100%;
   object-fit: cover;
   width: 100%;
@@ -1995,8 +2003,11 @@ h3 {
   }
 
   .hero-media img,
+  .hero-media video,
   .project-cover img,
+  .project-cover video,
   .gallery-item img,
+  .gallery-item video,
   .depth-layer,
   .cover-plate,
   .hero-media::before,
