@@ -375,6 +375,8 @@ function isVideoPath(src = "") {
     await waitForIntro(page);
     await visibleText(page, "Courtyard House");
     await visibleText(page, "Concept");
+    await page.locator(".detail-cover").waitFor({ state: "visible", timeout: 5000 });
+    await page.locator(".detail-showcase-media").waitFor({ state: "visible", timeout: 5000 });
     await page.locator(".gallery").waitFor({ state: "visible", timeout: 5000 });
     await page.getByRole("link", { name: "Back to Work" }).click();
     await visibleText(page, "Selected projects and spatial studies");
@@ -439,13 +441,16 @@ function isVideoPath(src = "") {
     await page.locator("#location").fill("Test City");
     await page.locator("[data-project-upload='#cover']").setInputFiles(path.join(process.cwd(), "assets", "project-courtyard.png"));
     await page.waitForFunction(() => document.querySelector("#cover")?.value.startsWith("assets/uploads/"));
-    const testVideo = await createTestVideoFile(page);
+    const backgroundVideo = await createTestVideoFile(page);
+    await page.locator("[data-project-upload='#backgroundMedia']").setInputFiles(backgroundVideo);
+    await page.waitForFunction(() => document.querySelector("#backgroundMedia")?.value.startsWith("assets/uploads/"));
+    const galleryVideo = await createTestVideoFile(page);
     await page.locator("[data-project-upload='#media']").setInputFiles(path.join(process.cwd(), "assets", "project-interior.png"));
     await page.waitForFunction(() => {
       const value = document.querySelector("#media")?.value || "";
       return value.split(/\n+/).filter((item) => item.startsWith("assets/uploads/")).length >= 1;
     });
-    await page.locator("[data-project-upload='#media']").setInputFiles(testVideo);
+    await page.locator("[data-project-upload='#media']").setInputFiles(galleryVideo);
     await page.waitForFunction(() => {
       const value = document.querySelector("#media")?.value || "";
       return value.split(/\n+/).filter((item) => item.startsWith("assets/uploads/")).length >= 2;
@@ -466,7 +471,7 @@ function isVideoPath(src = "") {
       const localState = localStorage.getItem("archPortfolioState.v1");
       const stored = localState ? JSON.parse(localState) : await fetch("/api/state").then((response) => response.json());
       const project = stored.projects.find((item) => item.title === "Playwright Test House");
-      return [project.cover, ...project.media];
+      return [project.cover, project.backgroundMedia, ...project.media].filter(Boolean);
     });
     if (uploadedPaths.some((src) => !src.startsWith("assets/uploads/"))) {
       throw new Error("Uploaded project media was not saved as asset paths.");
@@ -497,6 +502,21 @@ function isVideoPath(src = "") {
     if (storyCards !== expectedStoryCards) throw new Error(`Expected ${expectedStoryCards} story cards after creating a project, found ${storyCards}.`);
     await page.goto(`${baseUrl}/#project/playwright-test-house`, { waitUntil: "domcontentloaded" });
     await waitForIntro(page);
+    const showcaseVideo = page.locator(".detail-showcase-media video[data-ambient-video]").first();
+    await showcaseVideo.waitFor({ state: "visible", timeout: 5000 });
+    const showcase = await showcaseVideo.evaluate(async (video) => {
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      return {
+        controls: video.controls,
+        muted: video.muted,
+        paused: video.paused,
+        pointerEvents: getComputedStyle(video).pointerEvents,
+        readyState: video.readyState
+      };
+    });
+    if (showcase.controls || !showcase.muted || showcase.pointerEvents !== "none" || showcase.paused || showcase.readyState < 2) {
+      throw new Error(`Background showcase video is not a muted autoplay display surface: ${JSON.stringify(showcase)}.`);
+    }
     const detailVideo = page.locator(".gallery video").first();
     await detailVideo.waitFor({ state: "visible", timeout: 5000 });
     const playback = await detailVideo.evaluate(async (video) => {
@@ -538,7 +558,7 @@ function isVideoPath(src = "") {
     await card.waitFor({ state: "visible", timeout: 5000 });
     const firstSrc = await card.locator(".carousel-image").first().getAttribute("src");
     await card.hover();
-    await page.waitForTimeout(900);
+    await page.waitForTimeout(2100);
     const activeSrc = await card.locator(".carousel-image.active").first().getAttribute("src");
     if (activeSrc === firstSrc) throw new Error("Carousel did not change image on hover.");
     await page.mouse.move(10, 10);

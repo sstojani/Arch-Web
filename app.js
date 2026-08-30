@@ -64,6 +64,7 @@ const seedState = {
       featured: true,
       published: true,
       cover: imageBank[0],
+      backgroundMedia: imageBank[1],
       summary: "A private residence organized around a quiet garden court and layered thresholds.",
       concept: "The house turns inward, using the courtyard as a private source of light, ventilation, and calm.",
       challenge: "The site required privacy from the street while keeping the daily spaces open and bright.",
@@ -85,6 +86,7 @@ const seedState = {
       featured: true,
       published: true,
       cover: imageBank[1],
+      backgroundMedia: imageBank[5],
       summary: "A compact apartment shaped through warm stone, concealed storage, and precise lighting.",
       concept: "The project treats the apartment as a continuous cabinet of rooms, surfaces, and apertures.",
       challenge: "Storage and daily utility had to disappear without making the interior feel sterile.",
@@ -106,6 +108,7 @@ const seedState = {
       featured: true,
       published: true,
       cover: imageBank[2],
+      backgroundMedia: imageBank[3],
       summary: "A public gallery and event interior defined by flexible walls and controlled daylight.",
       concept: "The gallery becomes a neutral instrument for exhibitions, gatherings, and shifting cultural use.",
       challenge: "The space needed a strong identity while allowing art and public life to take priority.",
@@ -127,6 +130,7 @@ const seedState = {
       featured: false,
       published: true,
       cover: imageBank[3],
+      backgroundMedia: imageBank[4],
       summary: "A waterfront public-realm proposal connecting promenade, shade, market, and civic terrace.",
       concept: "The proposal turns a linear waterfront into a sequence of urban rooms and coastal thresholds.",
       challenge: "Pedestrian comfort, summer heat, and fragmented access weakened the public experience.",
@@ -148,6 +152,7 @@ let routeTimer = null;
 let parallaxCleanup = null;
 let storyCleanup = null;
 let immersiveCleanup = null;
+let ambientVideoCleanup = null;
 
 const main = document.querySelector("#main");
 const toast = document.querySelector(".toast");
@@ -287,6 +292,7 @@ function normalizeStoredState(input) {
   next.projects = next.projects.map((project, index) => ({
     ...project,
     cover: isBrowserStoredMedia(project.cover) ? imageBank[index % imageBank.length] : project.cover,
+    backgroundMedia: isBrowserStoredMedia(project.backgroundMedia) ? "" : (project.backgroundMedia || ""),
     media: splitMediaSources(project.media || []).filter((src) => !isBrowserStoredMedia(src))
   }));
   next.mediaItems = next.mediaItems.filter((item) => item && !isBrowserStoredMedia(item.src));
@@ -353,6 +359,7 @@ function page(content) {
   bindParallax();
   bindTiltCards();
   bindProjectCarousels();
+  bindAmbientVideos();
   bindStoryScroll();
   bindImmersiveScene();
   bindContactForm();
@@ -472,8 +479,13 @@ function renderProject(slug) {
   }
   const related = publishedProjects().filter((item) => item.id !== project.id).slice(0, 2);
   page(`
-    <section class="project-detail-hero media-frame">
-      ${projectHeroMedia(project)}
+    <section class="project-detail-hero" aria-label="${escapeHtml(project.title)} media showcase">
+      <figure class="detail-cover media-frame">
+        ${projectCoverMedia(project)}
+      </figure>
+      <figure class="detail-showcase-media media-frame ${project.backgroundMedia ? "has-supporting-media" : "is-empty"}">
+        ${projectShowcaseMedia(project)}
+      </figure>
     </section>
     <section class="container detail-layout">
       <aside class="meta-list" aria-label="Project metadata">
@@ -629,6 +641,7 @@ function projectForm(project) {
     featured: false,
     published: true,
     cover: "",
+    backgroundMedia: "",
     summary: "",
     concept: "",
     challenge: "",
@@ -648,6 +661,12 @@ function projectForm(project) {
       ${input("Role", "role", data.role)}
       ${input("Area / Size", "area", data.area)}
       ${projectUploadField("Cover Image", "cover", data.cover, false)}
+      ${projectUploadField("Background Image / Video", "backgroundMedia", data.backgroundMedia || "", false, {
+        accept: "image/*,video/*",
+        buttonLabel: "Upload Background Image / Video",
+        required: false,
+        summary: "Shown in the large right-side project showcase. Videos autoplay muted and cannot be controlled by visitors."
+      })}
       ${textarea("Short Description", "summary", data.summary, true)}
       ${textarea("Concept", "concept", data.concept)}
       ${textarea("Challenge", "challenge", data.challenge)}
@@ -850,6 +869,7 @@ function saveProjectFromForm(event) {
   const title = String(form.get("title") || "").trim();
   const slug = slugify(String(form.get("slug") || title));
   const cover = String(form.get("cover") || "").trim();
+  const backgroundMedia = String(form.get("backgroundMedia") || "").trim();
   const summary = String(form.get("summary") || "").trim();
   const existingProject = state.projects.find((item) => item.id === editingProjectId);
   const previousMedia = existingProject ? collectProjectMedia(existingProject) : [];
@@ -868,6 +888,7 @@ function saveProjectFromForm(event) {
     role: String(form.get("role") || ""),
     area: String(form.get("area") || ""),
     cover,
+    backgroundMedia,
     summary,
     concept: String(form.get("concept") || ""),
     challenge: String(form.get("challenge") || ""),
@@ -1068,22 +1089,25 @@ function adminProjectCard(project, index) {
   `;
 }
 
-function projectUploadField(label, name, value, multiple) {
+function projectUploadField(label, name, value, multiple, options = {}) {
   const previewSources = multiple ? splitMediaSources(value) : uniqueMediaList([value]);
   const inputType = multiple ? "textarea" : "input";
   const field = inputType === "textarea"
     ? `<textarea id="${name}" name="${name}" data-media-source>${escapeHtml(value)}</textarea>`
-    : `<input id="${name}" name="${name}" data-media-source value="${escapeAttr(value)}" required>`;
+    : `<input id="${name}" name="${name}" data-media-source value="${escapeAttr(value)}" ${options.required === false ? "" : "required"}>`;
+  const accept = options.accept || (multiple ? "image/*,video/*,application/pdf" : "image/*");
+  const buttonLabel = options.buttonLabel || (multiple ? "Upload Gallery Images / Videos" : "Upload Cover Image");
   return `
     <div class="field media-field full">
       <label for="${name}">${label}</label>
       <div class="upload-shell">
+        ${options.summary ? `<p class="micro upload-guidance">${escapeHtml(options.summary)}</p>` : ""}
         <div class="upload-preview" data-upload-preview="${name}">
           ${previewSources.slice(0, 8).map((src, index) => mediaPreview(src, index, name)).join("") || `<span class="upload-preview-item">No media selected yet.</span>`}
         </div>
         <label class="upload-button">
-          <span>${multiple ? "Upload Gallery Images / Videos" : "Upload Cover Image"}</span>
-          <input type="file" ${multiple ? "multiple" : ""} accept="${multiple ? "image/*,video/*,application/pdf" : "image/*"}" data-project-upload="#${name}">
+          <span>${buttonLabel}</span>
+          <input type="file" ${multiple ? "multiple" : ""} accept="${escapeAttr(accept)}" data-project-upload="#${name}">
         </label>
         <details>
           <summary>${multiple ? "Paste media URLs manually" : "Paste cover URL manually"}</summary>
@@ -1132,7 +1156,7 @@ function projectImages(project) {
 
 function collectProjectMedia(project) {
   if (!project) return [];
-  return uniqueMediaList([project.cover, ...(project.media || [])]);
+  return uniqueMediaList([project.cover, project.backgroundMedia, ...(project.media || [])]);
 }
 
 function referencedProjectMedia() {
@@ -1204,10 +1228,15 @@ function bindUploadPreviewControls(root = document) {
 }
 
 function bindMediaFallbacks(root = document) {
-  root.querySelectorAll("img[data-media-fallback], .project-cover img, .gallery-item img, .admin-card > img").forEach((image) => {
+  root.querySelectorAll("img[data-media-fallback], .media-frame img, .project-cover img, .gallery-item img, .admin-card > img").forEach((image) => {
     if (image.dataset.fallbackBound) return;
     image.dataset.fallbackBound = "true";
     image.addEventListener("error", () => {
+      if (image.dataset.fallbackSrc && image.dataset.fallbackTried !== "true") {
+        image.dataset.fallbackTried = "true";
+        image.src = image.dataset.fallbackSrc;
+        return;
+      }
       image.classList.add("is-broken");
     });
   });
@@ -1226,11 +1255,27 @@ function projectGallery(project) {
   }).join("");
 }
 
-function projectHeroMedia(project) {
+function projectCoverMedia(project) {
+  const fallback = `<span class="media-fallback detail-fallback">Project media unavailable</span>`;
   if (isVideoSrc(project.cover)) {
     return `<video class="parallax-media" src="${escapeAttr(project.cover)}" controls muted playsinline preload="metadata" aria-label="${escapeHtml(project.title)} hero video"></video>`;
   }
-  return `<img class="parallax-media" src="${escapeAttr(project.cover)}" alt="${escapeHtml(project.title)} hero image">`;
+  return `<img class="parallax-media" src="${escapeAttr(project.cover)}" alt="${escapeHtml(project.title)} hero image" data-media-fallback>${fallback}`;
+}
+
+function projectShowcaseMedia(project) {
+  const fallback = `<span class="media-fallback detail-fallback">Background media unavailable</span>`;
+  const src = String(project.backgroundMedia || "").trim();
+  if (!src) {
+    return "";
+  }
+  if (isVideoSrc(src)) {
+    return `<video class="parallax-media ambient-video" src="${escapeAttr(src)}" autoplay muted loop playsinline preload="metadata" tabindex="-1" data-ambient-video aria-label="${escapeHtml(project.title)} background video"></video>`;
+  }
+  if (isImageSrc(src)) {
+    return `<img class="parallax-media" src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} background media" data-media-fallback>${fallback}`;
+  }
+  return `<span class="media-fallback detail-fallback is-visible">Background media unavailable</span>`;
 }
 
 function isImageSrc(src = "") {
@@ -1638,6 +1683,39 @@ function bindProjectCarousels() {
     trigger.addEventListener("focusin", start);
     trigger.addEventListener("focusout", reset);
   });
+}
+
+function bindAmbientVideos() {
+  if (ambientVideoCleanup) ambientVideoCleanup();
+  const videos = [...document.querySelectorAll("video[data-ambient-video]")];
+  videos.forEach((video) => {
+    video.muted = true;
+    video.controls = false;
+    video.disablePictureInPicture = true;
+    video.disableRemotePlayback = true;
+    video.tabIndex = -1;
+  });
+
+  if (!videos.length || prefersReducedMotion()) {
+    videos.forEach((video) => video.pause());
+    ambientVideoCleanup = null;
+    return;
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      const video = entry.target;
+      if (entry.isIntersecting) video.play().catch(() => {});
+      else video.pause();
+    });
+  }, { threshold: 0.42 });
+
+  videos.forEach((video) => observer.observe(video));
+  ambientVideoCleanup = () => {
+    observer.disconnect();
+    videos.forEach((video) => video.pause());
+    ambientVideoCleanup = null;
+  };
 }
 
 function askConfirm(title, message, onConfirm) {
