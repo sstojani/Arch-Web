@@ -163,6 +163,94 @@ async function assertProjectHoverTitle(page) {
   }
 }
 
+async function assertImageLightbox(page) {
+  const trigger = page.locator(".project-image-flow img[data-lightbox-src]").first();
+  await trigger.scrollIntoViewIfNeeded();
+  await trigger.click();
+  await page.locator(".image-lightbox").waitFor({ state: "visible", timeout: 5000 });
+
+  const opened = await page.evaluate(() => {
+    const modal = document.querySelector(".image-lightbox");
+    const image = modal?.querySelector(".image-lightbox-stage img");
+    const controls = modal?.querySelectorAll(".image-lightbox-controls button");
+    const arrows = modal ? [...modal.querySelectorAll(".image-lightbox-arrow")] : [];
+    const close = modal?.querySelector(".image-lightbox-close");
+    const caption = modal?.querySelector(".image-lightbox-caption");
+    const rect = modal?.getBoundingClientRect();
+    const imageRect = image?.getBoundingClientRect();
+    return {
+      role: modal?.getAttribute("role"),
+      modal: rect ? {
+        top: Math.round(rect.top),
+        left: Math.round(rect.left),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      } : null,
+      image: imageRect ? {
+        width: Math.round(imageRect.width),
+        height: Math.round(imageRect.height)
+      } : null,
+      imageSrc: image?.getAttribute("src") || "",
+      bodyLocked: document.body.classList.contains("lightbox-open"),
+      imageComplete: Boolean(image?.complete && image?.naturalWidth),
+      controls: controls?.length || 0,
+      arrows: arrows.filter((button) => !button.hidden).length,
+      closeSize: close ? Math.round(close.getBoundingClientRect().width) : 0,
+      captionExists: Boolean(caption),
+      horizontalScroll: document.documentElement.scrollWidth > window.innerWidth + 1
+    };
+  });
+
+  if (opened.role !== "dialog" || !opened.bodyLocked || !opened.imageComplete || opened.controls !== 0 || opened.closeSize < 44) {
+    throw new Error(`Image lightbox did not open correctly: ${JSON.stringify(opened)}.`);
+  }
+  if (opened.captionExists || opened.arrows !== 2 || opened.horizontalScroll) {
+    throw new Error(`Image lightbox details/layout are not correct: ${JSON.stringify(opened)}.`);
+  }
+  if (opened.modal.top !== 0 || opened.modal.left !== 0 || opened.modal.width < 360 || opened.modal.height < 700) {
+    throw new Error(`Image lightbox should fill the viewport: ${JSON.stringify(opened)}.`);
+  }
+  if (!opened.image || opened.image.width < opened.modal.width * 0.28 || opened.image.height < opened.modal.height * 0.45) {
+    throw new Error(`Image lightbox should show a large full-quality image: ${JSON.stringify(opened)}.`);
+  }
+
+  await page.locator("[data-lightbox-next]").click();
+  await page.waitForTimeout(520);
+  const afterNext = await page.evaluate(() => document.querySelector(".image-lightbox-stage img")?.getAttribute("src") || "");
+  if (afterNext === opened.imageSrc) {
+    throw new Error("Image lightbox next arrow did not advance to another project image.");
+  }
+
+  await page.evaluate(() => {
+    const stage = document.querySelector(".image-lightbox-stage");
+    const rect = stage.getBoundingClientRect();
+    stage.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true,
+      clientX: rect.left + rect.width * 0.75,
+      clientY: rect.top + rect.height * 0.5,
+      pointerId: 1,
+      pointerType: "touch"
+    }));
+    stage.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true,
+      clientX: rect.left + rect.width * 0.2,
+      clientY: rect.top + rect.height * 0.5,
+      pointerId: 1,
+      pointerType: "touch"
+    }));
+  });
+  await page.waitForTimeout(520);
+  const afterSwipe = await page.evaluate(() => document.querySelector(".image-lightbox-stage img")?.getAttribute("src") || "");
+  if (afterSwipe === afterNext) {
+    throw new Error("Image lightbox swipe did not advance to another project image.");
+  }
+
+  await page.locator(".image-lightbox-close").click();
+  await page.locator(".image-lightbox").waitFor({ state: "detached", timeout: 5000 });
+  const closed = await page.evaluate(() => document.body.classList.contains("lightbox-open"));
+  if (closed) throw new Error("Image lightbox did not release the page after closing.");
+}
+
 async function assertWorkIntroFixedUnderGallery(page) {
   await page.goto(`${baseUrl}/#work`, { waitUntil: "networkidle" });
   await waitForApp(page);
@@ -473,6 +561,8 @@ function isVideoPath(src = "") {
     await assertFixedTransparentHeader(page);
     await assertMinimalGrid(page, 3);
     await assertProjectHoverTitle(page);
+    const workLightboxImages = await page.locator(".project-grid img[data-lightbox-src]").count();
+    if (workLightboxImages) throw new Error("Work thumbnails should navigate to projects instead of opening the image viewer.");
     await hasNoHorizontalScroll(page);
     await assertNoBrokenImages(page);
     await page.close();
@@ -487,6 +577,8 @@ function isVideoPath(src = "") {
     await assertMinimalGrid(page, 1);
     await assertMobileNavigation(page);
     await assertMobileGridIsImageOnly(page);
+    const workLightboxImages = await page.locator(".project-grid img[data-lightbox-src]").count();
+    if (workLightboxImages) throw new Error("Mobile work thumbnails should not open the image viewer directly.");
     await hasMobileGutters(page, [".brand", ".minimal-intro h1"]);
     await hasNoHorizontalScroll(page);
     await assertNoBrokenImages(page);
@@ -523,6 +615,7 @@ function isVideoPath(src = "") {
     await visibleText(page, "Concept");
     await page.locator(".project-facts").waitFor({ state: "visible", timeout: 5000 });
     await page.locator(".project-image-flow").waitFor({ state: "visible", timeout: 5000 });
+    await assertImageLightbox(page);
     await hasNoHorizontalScroll(page);
     await assertNoBrokenImages(page);
   });

@@ -154,6 +154,7 @@ let storyCleanup = null;
 let immersiveCleanup = null;
 let ambientVideoCleanup = null;
 let workIntroFadeCleanup = null;
+let imageLightboxCleanup = null;
 
 const main = document.querySelector("#main");
 const toast = document.querySelector(".toast");
@@ -353,9 +354,11 @@ function setActiveNav(name) {
 }
 
 function page(content) {
+  closeImageLightbox();
   main.innerHTML = `<div class="page">${content}</div>`;
   main.focus({ preventScroll: true });
   bindMediaFallbacks(main);
+  bindImageLightbox(main);
   bindWorkIntroFade();
   bindAmbientVideos();
   bindContactForm();
@@ -1158,7 +1161,7 @@ function projectMediaFlow(project) {
     if (isVideoSrc(src)) {
       return `<figure class="${itemClass}"><video src="${escapeAttr(src)}" autoplay muted loop playsinline preload="metadata" tabindex="-1" data-ambient-video aria-label="${escapeHtml(project.title)} video ${index + 1}"></video></figure>`;
     }
-    return `<figure class="${itemClass}"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} image ${index + 1}" loading="${index === 0 ? "eager" : "lazy"}" decoding="async" data-media-fallback data-fallback-src="${escapeAttr(fallbackSrc)}"></figure>`;
+    return `<figure class="${itemClass}"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} image ${index + 1}" loading="${index === 0 ? "eager" : "lazy"}" decoding="async" data-media-fallback data-fallback-src="${escapeAttr(fallbackSrc)}"${lightboxAttrs(project, src, `image ${index + 1}`)}></figure>`;
   }).join("");
 }
 
@@ -1170,7 +1173,7 @@ function projectGallery(project) {
       return `<figure class="gallery-item"><video src="${escapeAttr(src)}" controls muted playsinline preload="metadata" aria-label="${escapeHtml(project.title)} video ${index + 1}"></video></figure>`;
     }
     if (isImageSrc(src)) {
-      return `<figure class="gallery-item"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} gallery image ${index + 1}" data-media-fallback data-fallback-src="${escapeAttr(fallbackSrc)}"></figure>`;
+      return `<figure class="gallery-item"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} gallery image ${index + 1}" data-media-fallback data-fallback-src="${escapeAttr(fallbackSrc)}"${lightboxAttrs(project, src, `gallery image ${index + 1}`)}></figure>`;
     }
     return `<figure class="gallery-item gallery-file"><a class="button ghost" href="${escapeAttr(src)}" target="_blank" rel="noreferrer">Open media ${index + 1}</a></figure>`;
   }).join("");
@@ -1197,6 +1200,11 @@ function projectShowcaseMedia(project) {
     return `<img class="parallax-media" src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} background media" data-media-fallback>${fallback}`;
   }
   return `<span class="media-fallback detail-fallback is-visible">Background media unavailable</span>`;
+}
+
+function lightboxAttrs(project, src, label = "image") {
+  const meta = [project.category, project.location, project.year].filter(Boolean).join(" / ");
+  return ` data-lightbox-src="${escapeAttr(src)}" data-lightbox-title="${escapeAttr(project.title)}" data-lightbox-details="${escapeAttr(project.summary || "")}" data-lightbox-meta="${escapeAttr(meta)}" role="button" tabindex="0" aria-label="Open ${escapeAttr(project.title)} ${escapeAttr(label)} in image viewer"`;
 }
 
 function isImageSrc(src = "") {
@@ -1710,6 +1718,157 @@ function bindWorkIntroFade() {
     intro.style.removeProperty("--work-intro-opacity");
     workIntroFadeCleanup = null;
   };
+}
+
+function bindImageLightbox(root = document) {
+  root.querySelectorAll("img[data-lightbox-src]").forEach((image) => {
+    if (image.dataset.lightboxBound) return;
+    image.dataset.lightboxBound = "true";
+
+    const open = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const galleryImages = [...document.querySelectorAll(".project-image-flow img[data-lightbox-src]")]
+        .map((item) => ({
+          src: item.dataset.lightboxSrc || item.src,
+          title: item.dataset.lightboxTitle || item.alt || "Project image"
+        }))
+        .filter((item) => item.src);
+      const currentSrc = image.dataset.lightboxSrc || image.src;
+      const index = Math.max(0, galleryImages.findIndex((item) => item.src === currentSrc));
+      openImageLightbox(galleryImages, index);
+    };
+
+    image.addEventListener("click", open);
+    image.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") open(event);
+    });
+  });
+}
+
+function closeImageLightbox() {
+  const existing = document.querySelector(".image-lightbox");
+  if (!existing) return;
+  if (imageLightboxCleanup) imageLightboxCleanup();
+  existing.remove();
+  document.body.classList.remove("lightbox-open");
+  imageLightboxCleanup = null;
+}
+
+function openImageLightbox(images, startIndex = 0) {
+  closeImageLightbox();
+  const galleryImages = Array.isArray(images) ? images.filter((item) => item && item.src) : [];
+  if (!galleryImages.length) return;
+  let currentIndex = Math.min(Math.max(startIndex, 0), galleryImages.length - 1);
+
+  const modal = document.createElement("div");
+  modal.className = "image-lightbox";
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", "Project image viewer");
+  modal.innerHTML = `
+    <button class="image-lightbox-close" type="button" aria-label="Close image viewer"></button>
+    <button class="image-lightbox-arrow is-prev" type="button" data-lightbox-prev aria-label="Previous image"></button>
+    <figure class="image-lightbox-stage">
+      <img class="image-lightbox-image" draggable="false">
+    </figure>
+    <button class="image-lightbox-arrow is-next" type="button" data-lightbox-next aria-label="Next image"></button>
+  `;
+
+  const stage = modal.querySelector(".image-lightbox-stage");
+  let image = modal.querySelector(".image-lightbox-stage img");
+  const closeButton = modal.querySelector(".image-lightbox-close");
+  const previousButton = modal.querySelector("[data-lightbox-prev]");
+  const nextButton = modal.querySelector("[data-lightbox-next]");
+  let isAnimating = false;
+  let pointerStart = null;
+
+  const applyImage = (node, item) => {
+    node.src = item.src;
+    node.alt = `${item.title} full screen image`;
+  };
+
+  const showImage = (index, direction = 0) => {
+    const nextIndex = (index + galleryImages.length) % galleryImages.length;
+    if (!direction || nextIndex === currentIndex) {
+      currentIndex = nextIndex;
+      applyImage(image, galleryImages[currentIndex]);
+      previousButton.hidden = galleryImages.length < 2;
+      nextButton.hidden = galleryImages.length < 2;
+      return;
+    }
+    if (isAnimating) return;
+
+    isAnimating = true;
+    const outgoing = image;
+    const incoming = document.createElement("img");
+    incoming.className = "image-lightbox-image is-entering";
+    incoming.draggable = false;
+    incoming.style.setProperty("--slide-enter", `${direction * 100}%`);
+    outgoing.style.setProperty("--slide-exit", `${direction * -100}%`);
+    applyImage(incoming, galleryImages[nextIndex]);
+    stage.append(incoming);
+
+    requestAnimationFrame(() => {
+      outgoing.classList.add("is-leaving");
+      incoming.classList.remove("is-entering");
+    });
+
+    window.setTimeout(() => {
+      outgoing.remove();
+      incoming.classList.remove("is-entering", "is-leaving");
+      incoming.removeAttribute("style");
+      image = incoming;
+      currentIndex = nextIndex;
+      isAnimating = false;
+    }, 430);
+    previousButton.hidden = galleryImages.length < 2;
+    nextButton.hidden = galleryImages.length < 2;
+  };
+
+  const showPrevious = () => showImage(currentIndex - 1, -1);
+  const showNext = () => showImage(currentIndex + 1, 1);
+
+  const onKeydown = (event) => {
+    if (event.key === "Escape") closeImageLightbox();
+    if (event.key === "ArrowLeft") showPrevious();
+    if (event.key === "ArrowRight") showNext();
+  };
+
+  closeButton.addEventListener("click", closeImageLightbox);
+  previousButton.addEventListener("click", showPrevious);
+  nextButton.addEventListener("click", showNext);
+  stage.addEventListener("pointerdown", (event) => {
+    pointerStart = {
+      x: event.clientX,
+      y: event.clientY
+    };
+  });
+  stage.addEventListener("pointerup", (event) => {
+    if (!pointerStart) return;
+    const dx = event.clientX - pointerStart.x;
+    const dy = event.clientY - pointerStart.y;
+    pointerStart = null;
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.25) return;
+    if (dx < 0) showNext();
+    else showPrevious();
+  });
+  stage.addEventListener("pointercancel", () => {
+    pointerStart = null;
+  });
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) closeImageLightbox();
+  });
+
+  document.addEventListener("keydown", onKeydown);
+  imageLightboxCleanup = () => {
+    document.removeEventListener("keydown", onKeydown);
+  };
+
+  document.body.append(modal);
+  document.body.classList.add("lightbox-open");
+  showImage(currentIndex);
+  closeButton.focus({ preventScroll: true });
 }
 
 function askConfirm(title, message, onConfirm) {

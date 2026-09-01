@@ -1735,6 +1735,166 @@ h3 {
   z-index: 100;
 }
 
+body.lightbox-open {
+  overflow: hidden;
+}
+
+img[data-lightbox-src] {
+  cursor: zoom-in;
+  pointer-events: auto !important;
+}
+
+img[data-lightbox-src]:focus-visible {
+  outline: 2px solid #000000;
+  outline-offset: -2px;
+}
+
+.image-lightbox {
+  align-items: center;
+  background: #ffffff;
+  color: #000000;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0;
+  position: fixed;
+  z-index: 140;
+}
+
+.image-lightbox-close {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.22);
+  color: #000000;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0;
+  height: 52px;
+  justify-content: center;
+  position: fixed;
+  right: clamp(18px, 3vw, 40px);
+  top: clamp(16px, 3vw, 34px);
+  width: 52px;
+  z-index: 2;
+}
+
+.image-lightbox-close::before,
+.image-lightbox-close::after {
+  background: currentColor;
+  content: "";
+  height: 2px;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  width: 22px;
+}
+
+.image-lightbox-close::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.image-lightbox-close::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.image-lightbox-close:focus-visible,
+.image-lightbox-arrow:focus-visible {
+  outline: 2px solid #000000;
+  outline-offset: 4px;
+}
+
+.image-lightbox-arrow {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.1);
+  border: 0;
+  border-radius: 999px;
+  color: #000000;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0;
+  height: clamp(56px, 8vw, 86px);
+  justify-content: center;
+  line-height: 1;
+  opacity: 0.64;
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: background-color 180ms ease, opacity 180ms ease;
+  width: clamp(56px, 8vw, 86px);
+  z-index: 2;
+}
+
+.image-lightbox-arrow::before {
+  border-color: currentColor;
+  border-style: solid;
+  border-width: 0 0 4px 4px;
+  content: "";
+  display: block;
+  height: clamp(16px, 2vw, 24px);
+  width: clamp(16px, 2vw, 24px);
+}
+
+.image-lightbox-arrow.is-prev::before {
+  transform: translateX(15%) rotate(45deg);
+}
+
+.image-lightbox-arrow.is-next::before {
+  transform: translateX(-15%) rotate(-135deg);
+}
+
+.image-lightbox-arrow:hover {
+  background: rgba(0, 0, 0, 0.16);
+  opacity: 0.86;
+}
+
+.image-lightbox-arrow.is-prev {
+  left: clamp(18px, 3vw, 42px);
+}
+
+.image-lightbox-arrow.is-next {
+  right: clamp(18px, 3vw, 42px);
+}
+
+.image-lightbox-stage {
+  align-items: center;
+  background: transparent;
+  display: flex;
+  height: 100dvh;
+  justify-content: center;
+  margin: 0;
+  overflow: hidden;
+  padding: clamp(54px, 7vw, 84px) clamp(38px, 7vw, 96px) clamp(28px, 5vw, 64px);
+  position: relative;
+  touch-action: pan-y;
+  width: 100vw;
+}
+
+.image-lightbox-stage img {
+  display: block;
+  height: 100%;
+  inset: 0;
+  margin: auto;
+  max-height: calc(100dvh - clamp(88px, 11vw, 148px));
+  max-width: calc(100vw - clamp(76px, 14vw, 192px));
+  object-fit: contain;
+  position: absolute;
+  transform: translateX(0);
+  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 420ms ease;
+  user-select: none;
+  width: 100%;
+}
+
+.image-lightbox-image.is-entering {
+  opacity: 0;
+  transform: translateX(var(--slide-enter));
+}
+
+.image-lightbox-image.is-leaving {
+  opacity: 0;
+  transform: translateX(var(--slide-exit));
+}
+
 .confirm-dialog {
   background: var(--surface);
   box-shadow: var(--shadow);
@@ -3813,5 +3973,34 @@ body:not([data-route="admin"]) .project-grid {
 @media (max-width: 560px) {
   body:not([data-route="admin"]) .project-grid {
     gap: 15px;
+  }
+
+  .image-lightbox-close {
+    right: 6px;
+    top: 6px;
+  }
+
+  .image-lightbox-arrow {
+    font-size: 36px;
+    height: 52px;
+    width: 52px;
+  }
+
+  .image-lightbox-arrow.is-prev {
+    left: 8px;
+  }
+
+  .image-lightbox-arrow.is-next {
+    right: 8px;
+  }
+
+  .image-lightbox-stage {
+    height: 100dvh;
+    padding: 56px 10px 22px;
+  }
+
+  .image-lightbox-stage img {
+    max-height: calc(100dvh - 78px);
+    max-width: calc(100vw - 20px);
   }
 }
