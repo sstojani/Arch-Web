@@ -686,6 +686,16 @@ function isVideoPath(src = "") {
     if (rangeResponse.status !== 206) throw new Error(`Video uploads should support range playback, got HTTP ${rangeResponse.status}.`);
     for (const src of uploadedPaths) uploadedFilesToClean.add(path.join(process.cwd(), src));
 
+    await page.goto(`${baseUrl}/#project/playwright-test-house`, { waitUntil: "networkidle" });
+    await waitForApp(page);
+    const optionalProjectText = await page.locator(".project-facts, .meta-list").allTextContents();
+    const joinedProjectText = optionalProjectText.join("\n");
+    for (const hiddenLabel of ["Scope of work:", "Year", "Status", "Category", "Role", "Area"]) {
+      if (joinedProjectText.includes(hiddenLabel)) {
+        throw new Error(`Optional empty project value should not be visible: ${hiddenLabel}`);
+      }
+    }
+
     await page.goto(`${baseUrl}/#home`, { waitUntil: "networkidle" });
     await waitForApp(page);
     await visibleText(page, "Playwright Test House");

@@ -409,26 +409,15 @@ function renderProject(slug) {
     return;
   }
   const related = publishedProjects().filter((item) => item.id !== project.id).slice(0, 2);
+  const projectFacts = projectFactsMarkup(project);
+  const projectMeta = projectMetaMarkup(project);
   page(`
-    <section class="container project-facts" aria-label="${escapeHtml(project.title)} project information">
-      <p>Project: ${escapeHtml(project.title)} | ${escapeHtml(project.year)}</p>
-      <p>Scope of work: ${escapeHtml([project.category, project.role].filter(Boolean).join(", ") || project.category)}</p>
-      <p>Location: ${escapeHtml(project.location)}</p>
-      ${project.summary ? `<p>${escapeHtml(project.summary)}</p>` : ""}
-    </section>
+    ${projectFacts}
     <section class="container project-image-flow" aria-label="${escapeHtml(project.title)} image sequence">
       ${projectMediaFlow(project)}
     </section>
     <section class="container detail-layout minimal-detail project-notes">
-      <aside class="meta-list" aria-label="Project metadata">
-        ${metaRow("Project", project.title)}
-        ${metaRow("Location", project.location)}
-        ${metaRow("Year", project.year)}
-        ${metaRow("Status", project.status)}
-        ${metaRow("Category", project.category)}
-        ${metaRow("Role", project.role)}
-        ${metaRow("Area", project.area)}
-      </aside>
+      ${projectMeta}
       <article>
         ${caseSection("Concept", project.concept)}
         ${caseSection("Challenge", project.challenge)}
@@ -540,10 +529,10 @@ function projectForm(project) {
   const data = project || {
     title: "",
     slug: "",
-    category: "Residential",
+    category: "",
     location: "",
-    year: "2026",
-    status: "Draft",
+    year: "",
+    status: "",
     role: "",
     area: "",
     featured: false,
@@ -564,7 +553,7 @@ function projectForm(project) {
       ${input("Slug", "slug", data.slug, true)}
       ${input("Location", "location", data.location)}
       ${input("Year", "year", data.year)}
-      ${select("Category", "category", data.category, ["Residential", "Interior", "Commercial", "Renovation", "Urban", "Concept", "Competition"])}
+      ${select("Category", "category", data.category, ["Residential", "Interior", "Commercial", "Renovation", "Urban", "Concept", "Competition"], true)}
       ${input("Status", "status", data.status)}
       ${input("Role", "role", data.role)}
       ${input("Area / Size", "area", data.area)}
@@ -789,12 +778,12 @@ function saveProjectFromForm(event) {
     id: editingProjectId === "new" ? `p-${Date.now()}` : editingProjectId,
     title,
     slug,
-    category: String(form.get("category") || "Residential"),
-    location: String(form.get("location") || ""),
-    year: String(form.get("year") || ""),
-    status: String(form.get("status") || ""),
-    role: String(form.get("role") || ""),
-    area: String(form.get("area") || ""),
+    category: cleanOptionalValue(form.get("category")),
+    location: cleanOptionalValue(form.get("location")),
+    year: cleanOptionalValue(form.get("year")),
+    status: cleanOptionalValue(form.get("status")),
+    role: cleanOptionalValue(form.get("role")),
+    area: cleanOptionalValue(form.get("area")),
     cover,
     backgroundMedia,
     summary,
@@ -916,6 +905,7 @@ function moveProject(id, direction) {
 
 function projectCard(project) {
   const images = project.cover ? [project.cover].filter((src) => isImageSrc(src) || isVideoSrc(src)) : [];
+  const tagItems = [project.category, project.location].map(cleanOptionalValue).filter(Boolean);
   return `
     <a class="project-card" href="#project/${project.slug}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
       <figure class="project-cover ${images.length ? "" : "is-placeholder-only"}">
@@ -928,16 +918,14 @@ function projectCard(project) {
         </div>
         <span>${escapeHtml(project.year)}</span>
       </div>
-      <div class="tag-row">
-        <span class="tag">${escapeHtml(project.category)}</span>
-        <span class="tag">${escapeHtml(project.location)}</span>
-      </div>
+      ${tagItems.length ? `<div class="tag-row">${tagItems.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
     </a>
   `;
 }
 
 function projectStoryCard(project, index, total) {
   const images = project.cover ? [project.cover].filter((src) => isImageSrc(src) || isVideoSrc(src)) : [];
+  const tagItems = [project.category, project.location].map(cleanOptionalValue).filter(Boolean);
   return `
     <a class="project-card story-card ${index === 0 ? "active" : ""}" href="#project/${project.slug}" data-story-card data-index="${index}" data-total="${total}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
       <figure class="project-cover cinematic-cover ${images.length ? "" : "is-placeholder-only"}">
@@ -955,35 +943,38 @@ function projectStoryCard(project, index, total) {
         </div>
         <span>${escapeHtml(project.year)}</span>
       </div>
-      <div class="tag-row">
-        <span class="tag">${escapeHtml(project.category)}</span>
-        <span class="tag">${escapeHtml(project.location)}</span>
-      </div>
+      ${tagItems.length ? `<div class="tag-row">${tagItems.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
     </a>
   `;
 }
 
 function storyDetails(project, index, total) {
   if (!project) return "";
+  const rows = [
+    metaDefinition("Type", project.category),
+    metaDefinition("Place", project.location),
+    metaDefinition("Year", project.year)
+  ].filter(Boolean).join("");
   return `
     <span class="story-count">${String(index + 1).padStart(2, "0")} / ${String(total || 1).padStart(2, "0")}</span>
     <h3>${escapeHtml(project.title)}</h3>
     <p>${escapeHtml(project.summary)}</p>
-    <dl>
-      <div><dt>Type</dt><dd>${escapeHtml(project.category)}</dd></div>
-      <div><dt>Place</dt><dd>${escapeHtml(project.location)}</dd></div>
-      <div><dt>Year</dt><dd>${escapeHtml(project.year)}</dd></div>
-    </dl>
+    ${rows ? `<dl>${rows}</dl>` : ""}
   `;
 }
 
 function adminProjectCard(project, index) {
+  const statusItems = [
+    cleanOptionalValue(project.category),
+    project.published ? "Published" : "Draft",
+    project.featured ? "Featured" : "Not featured"
+  ].filter(Boolean);
   return `
     <article class="admin-card project-card">
       <img src="${project.cover}" alt="${escapeHtml(project.title)} thumbnail">
       <div>
         <h3>${escapeHtml(project.title)}</h3>
-        <p class="micro">${escapeHtml(project.category)} · ${project.published ? "Published" : "Draft"} · ${project.featured ? "Featured" : "Not featured"}</p>
+        <p class="micro">${escapeHtml(statusItems.join(" · "))}</p>
       </div>
       <div class="admin-actions">
         <button class="button ghost" type="button" data-edit-project="${project.id}">Edit</button>
@@ -1905,8 +1896,9 @@ function textarea(label, name, value = "", required = false) {
   return `<div class="field full"><label for="${name}">${label}</label><textarea id="${name}" name="${name}" ${required ? "required" : ""}>${escapeHtml(value)}</textarea></div>`;
 }
 
-function select(label, name, value, options) {
-  return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}">${options.map((option) => `<option value="${option}" ${option === value ? "selected" : ""}>${option}</option>`).join("")}</select></div>`;
+function select(label, name, value, options, optional = false) {
+  const blank = optional ? `<option value="" ${cleanOptionalValue(value) ? "" : "selected"}>None</option>` : "";
+  return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}">${blank}${options.map((option) => `<option value="${option}" ${option === value ? "selected" : ""}>${option}</option>`).join("")}</select></div>`;
 }
 
 function emptyState(message) {
@@ -1914,7 +1906,60 @@ function emptyState(message) {
 }
 
 function metaRow(label, value) {
-  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "Not set")}</strong></div>`;
+  const clean = cleanOptionalValue(value);
+  if (!clean) return "";
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(clean)}</strong></div>`;
+}
+
+function metaDefinition(label, value) {
+  const clean = cleanOptionalValue(value);
+  if (!clean) return "";
+  return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(clean)}</dd></div>`;
+}
+
+function projectFactsMarkup(project) {
+  const year = cleanOptionalValue(project.year);
+  const title = cleanOptionalValue(project.title);
+  const projectLine = title ? `Project: ${title}${year ? ` | ${year}` : ""}` : "";
+  const scope = [project.category, project.role].map(cleanOptionalValue).filter(Boolean).join(", ");
+  const rows = [
+    factRow(projectLine),
+    factRow(scope, "Scope of work"),
+    factRow(project.location, "Location"),
+    factRow(project.status, "Status"),
+    factRow(project.area, "Area"),
+    cleanOptionalValue(project.summary) ? `<p>${escapeHtml(cleanOptionalValue(project.summary))}</p>` : ""
+  ].filter(Boolean).join("");
+  if (!rows) return "";
+  return `<section class="container project-facts" aria-label="${escapeHtml(project.title)} project information">${rows}</section>`;
+}
+
+function projectMetaMarkup(project) {
+  const rows = [
+    metaRow("Project", project.title),
+    metaRow("Location", project.location),
+    metaRow("Year", project.year),
+    metaRow("Status", project.status),
+    metaRow("Category", project.category),
+    metaRow("Role", project.role),
+    metaRow("Area", project.area)
+  ].filter(Boolean).join("");
+  if (!rows) return "";
+  return `<aside class="meta-list" aria-label="Project metadata">${rows}</aside>`;
+}
+
+function factRow(value, label = "") {
+  const clean = cleanOptionalValue(value);
+  if (!clean) return "";
+  return `<p>${label ? `${escapeHtml(label)}: ` : ""}${escapeHtml(clean)}</p>`;
+}
+
+function cleanOptionalValue(value) {
+  const clean = String(value ?? "").trim();
+  if (!clean) return "";
+  const normalized = clean.toLowerCase();
+  if (["-", "--", "not set", "n/a", "na", "none", "null", "undefined"].includes(normalized)) return "";
+  return clean;
 }
 
 function caseSection(label, value) {
