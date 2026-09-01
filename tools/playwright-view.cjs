@@ -1,4 +1,5 @@
 const fs = require("fs/promises");
+const os = require("os");
 const path = require("path");
 
 function loadPlaywright() {
@@ -25,7 +26,7 @@ const height = Number(argValue("height", "1000"));
 const wait = Number(argValue("wait", "600"));
 const scroll = Number(argValue("scroll", "0"));
 const fullPage = process.argv.includes("--full");
-const outDir = path.join(process.cwd(), "output", "playwright");
+const outDir = process.env.PORTFOLIO_SCREENSHOT_DIR || path.join(os.tmpdir(), "arch-web-playwright");
 const outPath = argValue("out", path.join(outDir, "manual-view.png"));
 
 (async () => {

@@ -153,6 +153,7 @@ let parallaxCleanup = null;
 let storyCleanup = null;
 let immersiveCleanup = null;
 let ambientVideoCleanup = null;
+let workIntroFadeCleanup = null;
 
 const main = document.querySelector("#main");
 const toast = document.querySelector(".toast");
@@ -355,13 +356,8 @@ function page(content) {
   main.innerHTML = `<div class="page">${content}</div>`;
   main.focus({ preventScroll: true });
   bindMediaFallbacks(main);
-  bindReveal();
-  bindParallax();
-  bindTiltCards();
-  bindProjectCarousels();
+  bindWorkIntroFade();
   bindAmbientVideos();
-  bindStoryScroll();
-  bindImmersiveScene();
   bindContactForm();
 }
 
@@ -375,100 +371,32 @@ function projectAssetCount() {
 
 function renderHome() {
   const projects = publishedProjects();
-  const featured = projects.filter((project) => project.featured);
-  const heroProject = featured[0] || projects[0] || seedState.projects[0];
-  const storyProjects = projects.length ? projects : [heroProject];
   page(`
-    <section class="hero container">
-      <div class="hero-copy">
-        <p class="eyebrow">Architecture Portfolio</p>
-        <h1>${escapeHtml(state.settings.heroTitle)}</h1>
-        <p class="lede">${escapeHtml(state.settings.tagline)}</p>
-        <div class="hero-actions">
-          <a class="button accent" href="#work">View Selected Work</a>
-          <a class="button ghost" href="#contact">Start a Conversation</a>
-        </div>
-      </div>
-      <figure class="hero-media media-frame">
-        <div class="depth-layer depth-grid" data-speed="0.09" aria-hidden="true"></div>
-        <div class="depth-layer depth-plan" data-speed="-0.11" aria-hidden="true"></div>
-        <div class="depth-layer depth-slab one" data-speed="-0.16" aria-hidden="true"></div>
-        <div class="depth-layer depth-slab two" data-speed="0.24" aria-hidden="true"></div>
-        <div class="depth-layer depth-measure" data-speed="0.36" aria-hidden="true">01</div>
-        <img class="parallax-media hero-image" data-speed="-0.42" src="${heroProject.cover}" alt="${escapeHtml(heroProject.title)} architectural project image">
-        <figcaption class="hero-label">
-          <p class="eyebrow">Featured Project</p>
-          <strong>${escapeHtml(heroProject.title)}</strong>
-          <p class="micro">${escapeHtml(heroProject.location)} · ${escapeHtml(heroProject.year)}</p>
-        </figcaption>
-      </figure>
+    <section class="minimal-intro container" aria-labelledby="homeIntro">
+      <h1 id="homeIntro">${escapeHtml(state.settings.intro)}</h1>
+      <p>${escapeHtml(state.settings.tagline)}</p>
     </section>
-    <section class="section container scroll-cinema">
-      <div class="cinema-copy">
-        <p class="eyebrow">Spatial Scroll</p>
-        <h2>The portfolio moves like a model being opened.</h2>
-        <p class="lede">Plans, facades, material fields, and project notes shift with the scroll so every case study feels active before it is opened.</p>
-      </div>
-      <div class="cinema-stage" aria-hidden="true">
-        <span class="cinema-plane base" data-speed="-0.12"></span>
-        <span class="cinema-plane volume-a" data-speed="0.24"></span>
-        <span class="cinema-plane volume-b" data-speed="-0.32"></span>
-        <span class="cinema-plane grid-cut" data-speed="0.16"></span>
-        <span class="cinema-plane section-mark" data-speed="-0.22"></span>
-      </div>
+    <section class="container minimal-gallery" aria-label="Selected architecture work">
+      <div class="project-grid">${projects.map(projectCard).join("") || emptyState("No published projects are available yet.")}</div>
     </section>
-    <section class="section container work-story">
-      <aside class="story-pin" aria-label="Active project story">
-        <p class="eyebrow">Selected Work</p>
-        <h2>Scroll through the project sequence.</h2>
-        <div class="story-rail" aria-hidden="true"><span data-story-progress></span></div>
-        <div class="story-current" aria-live="polite">
-          ${storyDetails(storyProjects[0], 0, storyProjects.length)}
-        </div>
-        <a class="button ghost" href="#work">All Work</a>
-      </aside>
-      <div class="story-stack">
-        ${storyProjects.map((project, index) => projectStoryCard(project, index, storyProjects.length)).join("")}
-      </div>
+    <section class="container minimal-footer-note">
+      <p>${escapeHtml(state.settings.contactEmail)} · ${escapeHtml(state.settings.phone)}</p>
+      <a href="#about">About the practice</a>
     </section>
-    <section class="section container">
-      <div class="split">
-        <div>
-          <p class="eyebrow">Studio</p>
-          <h2>Measured spaces for real lives and memorable places.</h2>
-        </div>
-        <div>
-          <p class="lede">${escapeHtml(state.settings.intro)}</p>
-          <p>${escapeHtml(state.settings.philosophy)}</p>
-          <div class="section-actions"><a class="button ghost" href="#about">Read About</a></div>
-        </div>
-      </div>
-    </section>
-    ${servicesSection()}
   `);
 }
 
-function renderWork(filter = "All") {
-  const categories = ["All", ...new Set(publishedProjects().map((project) => project.category))];
-  const projects = filter === "All" ? publishedProjects() : publishedProjects().filter((project) => project.category === filter);
+function renderWork() {
+  const projects = publishedProjects();
   page(`
-    <section class="page-head container">
-      <p class="eyebrow">Work</p>
-      <h1>Selected projects and spatial studies.</h1>
-      <p class="lede">Filter by project type, then open each case study for process, drawings, materials, and outcomes.</p>
+    <section class="minimal-intro container" aria-labelledby="workIntro">
+      <h1 id="workIntro">${escapeHtml(state.settings.intro)}</h1>
+      <p>${escapeHtml(state.settings.tagline)}</p>
     </section>
-    <section class="container">
-      <div class="filter-row" aria-label="Project filters">
-        ${categories.map((category) => `<button class="filter-button ${category === filter ? "active" : ""}" type="button" data-filter="${category}">${category}</button>`).join("")}
-      </div>
-    </section>
-    <section class="section container">
-      <div class="project-grid">${projects.map(projectCard).join("") || emptyState("No published projects match this filter.")}</div>
+    <section class="container minimal-gallery" aria-label="Architecture work archive">
+      <div class="project-grid">${projects.map(projectCard).join("") || emptyState("No published projects are available yet.")}</div>
     </section>
   `);
-  document.querySelectorAll("[data-filter]").forEach((button) => {
-    button.addEventListener("click", () => renderWork(button.dataset.filter));
-  });
 }
 
 function renderProject(slug) {
@@ -479,15 +407,16 @@ function renderProject(slug) {
   }
   const related = publishedProjects().filter((item) => item.id !== project.id).slice(0, 2);
   page(`
-    <section class="project-detail-hero" aria-label="${escapeHtml(project.title)} media showcase">
-      <figure class="detail-cover media-frame">
-        ${projectCoverMedia(project)}
-      </figure>
-      <figure class="detail-showcase-media media-frame ${project.backgroundMedia ? "has-supporting-media" : "is-empty"}">
-        ${projectShowcaseMedia(project)}
-      </figure>
+    <section class="container project-facts" aria-label="${escapeHtml(project.title)} project information">
+      <p>Project: ${escapeHtml(project.title)} | ${escapeHtml(project.year)}</p>
+      <p>Scope of work: ${escapeHtml([project.category, project.role].filter(Boolean).join(", ") || project.category)}</p>
+      <p>Location: ${escapeHtml(project.location)}</p>
+      ${project.summary ? `<p>${escapeHtml(project.summary)}</p>` : ""}
     </section>
-    <section class="container detail-layout">
+    <section class="container project-image-flow" aria-label="${escapeHtml(project.title)} image sequence">
+      ${projectMediaFlow(project)}
+    </section>
+    <section class="container detail-layout minimal-detail project-notes">
       <aside class="meta-list" aria-label="Project metadata">
         ${metaRow("Project", project.title)}
         ${metaRow("Location", project.location)}
@@ -496,24 +425,17 @@ function renderProject(slug) {
         ${metaRow("Category", project.category)}
         ${metaRow("Role", project.role)}
         ${metaRow("Area", project.area)}
-        <div><a class="button ghost" href="#work">Back to Work</a></div>
       </aside>
       <article>
-        <p class="eyebrow">${escapeHtml(project.category)}</p>
-        <h1>${escapeHtml(project.title)}</h1>
-        <p class="lede">${escapeHtml(project.summary)}</p>
         ${caseSection("Concept", project.concept)}
         ${caseSection("Challenge", project.challenge)}
         ${caseSection("Solution", project.solution)}
         ${caseSection("Materials", project.materials)}
         ${caseSection("Result", project.result)}
-        <div class="gallery" aria-label="Project gallery">
-          ${projectGallery(project)}
-        </div>
       </article>
     </section>
-    <section class="section container">
-      <div class="section-header"><h2>Related work</h2><a class="button ghost" href="#work">View all</a></div>
+    <section class="container related-work">
+      <p class="eyebrow">See more</p>
       <div class="project-grid">${related.map(projectCard).join("")}</div>
     </section>
   `);
@@ -521,38 +443,21 @@ function renderProject(slug) {
 
 function renderAbout() {
   page(`
-    <section class="page-head container about-head">
-      <p class="eyebrow">About</p>
-      <h1>A practice shaped by observation, clear writing, and careful spaces.</h1>
-      <p class="lede">I use writing as the first design tool: to understand a site, frame the problem, and turn each project into a clear spatial story.</p>
+    <section class="container about-copy">
+      <p>${escapeHtml(state.settings.intro)}</p>
+      <p>${escapeHtml(state.settings.philosophy)}</p>
     </section>
-    <section class="section container about-profile">
-      <div class="about-note">
-        <p class="eyebrow">Profile</p>
-        <p class="lede">${escapeHtml(state.settings.intro)}</p>
-        <p>${escapeHtml(state.settings.philosophy)}</p>
-      </div>
-      <div class="about-achievements">
-        <p class="eyebrow">What I Bring</p>
-        <h2>From concept notes to finished places.</h2>
-        <div class="services">${state.services.map((service, index) => serviceRow(service, index)).join("")}</div>
-      </div>
-    </section>
-    <section class="section container about-statement">
-      <div>
-        <p class="eyebrow">Method</p>
-        <h2>Every project starts with a sentence that makes the idea simple.</h2>
-      </div>
-      <p class="lede">Before the image, I look for the reason behind the work: how people arrive, what they need to feel, which materials should stay quiet, and where light can do the heavy lifting.</p>
+    <section class="container about-services">
+      ${state.services.map((service, index) => serviceRow(service, index)).join("")}
     </section>
   `);
 }
 
 function renderContact() {
   page(`
-    <section class="page-head container">
-      <p class="eyebrow">Contact</p>
-      <h1>Discuss a site, a space, or a project in progress.</h1>
+    <section class="page-head container minimal-page-head">
+      <h1>Contact</h1>
+      <p class="lede">Discuss a site, a space, or a project in progress.</p>
     </section>
     <section class="container section">${contactPanel()}</section>
   `);
@@ -1007,11 +912,10 @@ function moveProject(id, direction) {
 }
 
 function projectCard(project) {
-  const images = projectImages(project);
-  const carouselAttr = images.length > 1 ? " data-carousel" : "";
+  const images = project.cover ? [project.cover].filter((src) => isImageSrc(src) || isVideoSrc(src)) : [];
   return `
     <a class="project-card" href="#project/${project.slug}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
-      <figure class="project-cover ${images.length ? "" : "is-placeholder-only"}"${carouselAttr}>
+      <figure class="project-cover ${images.length ? "" : "is-placeholder-only"}">
         ${projectImageMarkup(project, images)}
       </figure>
       <div class="project-meta">
@@ -1030,11 +934,10 @@ function projectCard(project) {
 }
 
 function projectStoryCard(project, index, total) {
-  const images = projectImages(project);
-  const carouselAttr = images.length > 1 ? " data-carousel" : "";
+  const images = project.cover ? [project.cover].filter((src) => isImageSrc(src) || isVideoSrc(src)) : [];
   return `
     <a class="project-card story-card ${index === 0 ? "active" : ""}" href="#project/${project.slug}" data-story-card data-index="${index}" data-total="${total}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
-      <figure class="project-cover cinematic-cover ${images.length ? "" : "is-placeholder-only"}"${carouselAttr}>
+      <figure class="project-cover cinematic-cover ${images.length ? "" : "is-placeholder-only"}">
         <span class="story-number" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span>
         <span class="cover-plate plate-a" data-speed="0.34" aria-hidden="true"></span>
         <span class="cover-plate plate-b" data-speed="-0.26" aria-hidden="true"></span>
@@ -1134,11 +1037,12 @@ function projectImageMarkup(project, images, speed = "") {
   if (!images.length) return `<span class="cover-placeholder" aria-hidden="true"></span>`;
   return images.map((src, imageIndex) => {
     const speedAttr = speed ? ` data-speed="${speed}"` : "";
+    const fallbackSrc = imageBank[imageIndex % imageBank.length];
     const loading = imageIndex === 0 ? "eager" : "lazy";
     if (isVideoSrc(src)) {
       return `<video class="carousel-image ${imageIndex === 0 ? "active" : ""}"${speedAttr} src="${escapeAttr(src)}" muted playsinline loop preload="metadata" aria-label="${escapeHtml(project.title)} project video ${imageIndex + 1}"></video>`;
     }
-    return `<img class="carousel-image ${imageIndex === 0 ? "active" : ""}"${speedAttr} src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} project thumbnail ${imageIndex + 1}" loading="${loading}" decoding="async">`;
+    return `<img class="carousel-image ${imageIndex === 0 ? "active" : ""}"${speedAttr} src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} project thumbnail ${imageIndex + 1}" loading="${loading}" decoding="async" data-fallback-src="${escapeAttr(fallbackSrc)}">`;
   }).join("");
 }
 
@@ -1228,7 +1132,7 @@ function bindUploadPreviewControls(root = document) {
 }
 
 function bindMediaFallbacks(root = document) {
-  root.querySelectorAll("img[data-media-fallback], .media-frame img, .project-cover img, .gallery-item img, .admin-card > img").forEach((image) => {
+  root.querySelectorAll("img[data-media-fallback], .media-frame img, .project-cover img, .gallery-item img, .project-flow-item img, .admin-card > img").forEach((image) => {
     if (image.dataset.fallbackBound) return;
     image.dataset.fallbackBound = "true";
     image.addEventListener("error", () => {
@@ -1242,14 +1146,31 @@ function bindMediaFallbacks(root = document) {
   });
 }
 
+function projectMediaFlow(project) {
+  const media = uniqueMediaList([project.cover, project.backgroundMedia, ...(project.media || [])])
+    .filter((src) => isImageSrc(src) || isVideoSrc(src));
+  const items = media.length ? media : [project.cover].filter(Boolean);
+  if (!items.length) return `<figure class="project-flow-item"><span class="cover-placeholder" aria-hidden="true"></span></figure>`;
+
+  return items.map((src, index) => {
+    const itemClass = (index + 1) % 3 === 0 ? "project-flow-item is-wide" : "project-flow-item";
+    const fallbackSrc = imageBank[index % imageBank.length];
+    if (isVideoSrc(src)) {
+      return `<figure class="${itemClass}"><video src="${escapeAttr(src)}" autoplay muted loop playsinline preload="metadata" tabindex="-1" data-ambient-video aria-label="${escapeHtml(project.title)} video ${index + 1}"></video></figure>`;
+    }
+    return `<figure class="${itemClass}"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} image ${index + 1}" loading="${index === 0 ? "eager" : "lazy"}" decoding="async" data-media-fallback data-fallback-src="${escapeAttr(fallbackSrc)}"></figure>`;
+  }).join("");
+}
+
 function projectGallery(project) {
   const media = project.media && project.media.length ? project.media : [project.cover];
   return media.map((src, index) => {
+    const fallbackSrc = imageBank[index % imageBank.length];
     if (isVideoSrc(src)) {
       return `<figure class="gallery-item"><video src="${escapeAttr(src)}" controls muted playsinline preload="metadata" aria-label="${escapeHtml(project.title)} video ${index + 1}"></video></figure>`;
     }
     if (isImageSrc(src)) {
-      return `<figure class="gallery-item"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} gallery image ${index + 1}"></figure>`;
+      return `<figure class="gallery-item"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} gallery image ${index + 1}" data-media-fallback data-fallback-src="${escapeAttr(fallbackSrc)}"></figure>`;
     }
     return `<figure class="gallery-item gallery-file"><a class="button ghost" href="${escapeAttr(src)}" target="_blank" rel="noreferrer">Open media ${index + 1}</a></figure>`;
   }).join("");
@@ -1260,7 +1181,7 @@ function projectCoverMedia(project) {
   if (isVideoSrc(project.cover)) {
     return `<video class="parallax-media" src="${escapeAttr(project.cover)}" controls muted playsinline preload="metadata" aria-label="${escapeHtml(project.title)} hero video"></video>`;
   }
-  return `<img class="parallax-media" src="${escapeAttr(project.cover)}" alt="${escapeHtml(project.title)} hero image" data-media-fallback>${fallback}`;
+  return `<img class="parallax-media" src="${escapeAttr(project.cover)}" alt="${escapeHtml(project.title)} hero image" data-media-fallback data-fallback-src="${escapeAttr(imageBank[0])}">${fallback}`;
 }
 
 function projectShowcaseMedia(project) {
@@ -1718,6 +1639,79 @@ function bindAmbientVideos() {
   };
 }
 
+function bindWorkIntroFade() {
+  if (workIntroFadeCleanup) workIntroFadeCleanup();
+
+  const intro = document.querySelector(".minimal-intro");
+  const shouldBind = document.body.dataset.route === "work" && intro && !prefersReducedMotion();
+
+  if (!intro) {
+    workIntroFadeCleanup = null;
+    return;
+  }
+
+  intro.style.setProperty("--work-intro-opacity", "1");
+
+  if (!shouldBind) {
+    workIntroFadeCleanup = null;
+    return;
+  }
+
+  let ticking = false;
+
+  const update = () => {
+    ticking = false;
+    const gallery = document.querySelector(".minimal-gallery");
+    const textNodes = [...intro.querySelectorAll("h1, p")];
+
+    if (!gallery || !textNodes.length) return;
+
+    const textBounds = textNodes.reduce((bounds, node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        top: Math.min(bounds.top, rect.top),
+        bottom: Math.max(bounds.bottom, rect.bottom)
+      };
+    }, { top: Number.POSITIVE_INFINITY, bottom: 0 });
+    const galleryTop = gallery.getBoundingClientRect().top;
+    const fadeDistance = Math.max(260, Math.min(420, window.innerHeight * 0.34));
+    const fadeStart = textBounds.bottom + fadeDistance;
+    const fadeEnd = textBounds.top + 18;
+    const overlapProgress = Math.min(1, Math.max(0, (fadeStart - galleryTop) / (fadeStart - fadeEnd)));
+    const scrollProgress = Math.min(1, Math.max(0, window.scrollY / 260));
+    const easedScroll = scrollProgress * scrollProgress * (3 - 2 * scrollProgress);
+    let opacityProgress = 0;
+
+    if (overlapProgress < 0.45) {
+      opacityProgress = overlapProgress * 0.34;
+    } else if (overlapProgress < 0.75) {
+      opacityProgress = 0.153 + ((overlapProgress - 0.45) / 0.3) * 0.36;
+    } else {
+      opacityProgress = 0.513 + Math.pow((overlapProgress - 0.75) / 0.25, 0.68) * 0.487;
+    }
+
+    const progress = opacityProgress * easedScroll;
+    intro.style.setProperty("--work-intro-opacity", (1 - progress).toFixed(3));
+  };
+
+  const requestUpdate = () => {
+    if (!ticking) {
+      ticking = true;
+      requestAnimationFrame(update);
+    }
+  };
+
+  update();
+  window.addEventListener("scroll", requestUpdate, { passive: true });
+  window.addEventListener("resize", requestUpdate);
+  workIntroFadeCleanup = () => {
+    window.removeEventListener("scroll", requestUpdate);
+    window.removeEventListener("resize", requestUpdate);
+    intro.style.removeProperty("--work-intro-opacity");
+    workIntroFadeCleanup = null;
+  };
+}
+
 function askConfirm(title, message, onConfirm) {
   const template = document.querySelector("#confirmTemplate");
   const modal = template.content.firstElementChild.cloneNode(true);
@@ -1815,10 +1809,7 @@ async function initializeApp() {
   applySettings();
   route();
 
-  window.setTimeout(
-    () => document.body.classList.add("intro-complete"),
-    4500
-  );
+  document.body.classList.add("intro-complete");
 }
 
 initializeApp().catch((error) => {

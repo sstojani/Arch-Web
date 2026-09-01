@@ -1,5 +1,8 @@
 debug.log
+output/
 .migration-backup/
+migrate-server-storage.cjs
+istence to server*
 data/portfolio.json
 data/*.tmp
 assets/uploads/
