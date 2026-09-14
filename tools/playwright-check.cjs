@@ -545,6 +545,44 @@ function isVideoPath(src = "") {
   return /\.(m4v|mov|mp4|ogg|ogv|webm)(\?.*)?$/i.test(src);
 }
 
+function isImagePath(src = "") {
+  return /\.(avif|gif|jpe?g|png|svg|webp)(\?.*)?$/i.test(src);
+}
+
+function createTestImageFile() {
+  const width = 900;
+  const height = 700;
+  const rowSize = Math.floor((24 * width + 31) / 32) * 4;
+  const pixelSize = rowSize * height;
+  const fileSize = 54 + pixelSize;
+  const buffer = Buffer.alloc(fileSize);
+
+  buffer.write("BM", 0);
+  buffer.writeUInt32LE(fileSize, 2);
+  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(40, 14);
+  buffer.writeInt32LE(width, 18);
+  buffer.writeInt32LE(height, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  buffer.writeUInt32LE(pixelSize, 34);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const offset = 54 + y * rowSize + x * 3;
+      buffer[offset] = (x * 3 + y) % 256;
+      buffer[offset + 1] = (x + y * 2) % 256;
+      buffer[offset + 2] = (x * 2 + y * 5) % 256;
+    }
+  }
+
+  return {
+    name: "playwright-test-cover.bmp",
+    mimeType: "image/bmp",
+    buffer
+  };
+}
+
 (async () => {
   await fs.rm(path.join(process.cwd(), "debug.log"), { force: true });
   await fs.mkdir(outDir, { recursive: true });
@@ -665,7 +703,7 @@ function isVideoPath(src = "") {
     await page.locator("#title").fill("Playwright Test House");
     await page.locator("#slug").fill("playwright-test-house");
     await page.locator("#location").fill("Test City");
-    await page.locator("[data-project-upload='#cover']").setInputFiles(path.join(process.cwd(), "assets", "project-courtyard.png"));
+    await page.locator("[data-project-upload='#cover']").setInputFiles(createTestImageFile());
     await page.waitForFunction(() => document.querySelector("#cover")?.value.startsWith("assets/uploads/"));
     const backgroundVideo = await createTestVideoFile(page);
     await page.locator("[data-project-upload='#backgroundMedia']").setInputFiles(backgroundVideo);
@@ -674,20 +712,46 @@ function isVideoPath(src = "") {
     await page.locator("input[name='published']").check();
     await page.getByRole("button", { name: "Save Project" }).click();
     await visibleText(page, "Project saved");
-    const uploadedPaths = await page.evaluate(async () => {
+    const uploadState = await page.evaluate(async () => {
       const stored = await fetch("/api/state").then((response) => response.json());
       const project = stored.projects.find((item) => item.title === "Playwright Test House");
-      return [project.cover, project.backgroundMedia, ...project.media].filter(Boolean);
+      const paths = [project.cover, project.backgroundMedia, ...project.media].filter(Boolean);
+      return { paths, mediaVariants: stored.mediaVariants || {} };
     });
+    const uploadedPaths = uploadState.paths;
     if (uploadedPaths.some((src) => !src.startsWith("assets/uploads/"))) throw new Error("Uploaded project media was not saved as asset paths.");
+    const uploadedImage = uploadedPaths.find(isImagePath);
+    if (!uploadedImage) throw new Error("Uploaded image was not saved with the project.");
+    if (!/\.webp(\?.*)?$/i.test(uploadedImage)) throw new Error(`Image uploads should be optimized to WebP, got ${uploadedImage}.`);
+    const fullSizeImage = uploadState.mediaVariants[uploadedImage];
+    if (!fullSizeImage || fullSizeImage === uploadedImage || !/\.bmp(\?.*)?$/i.test(fullSizeImage)) {
+      throw new Error(`Optimized image should keep an original full-size source, got ${fullSizeImage || "nothing"}.`);
+    }
+    const imageResponse = await fetch(`${baseUrl}/${uploadedImage}`, { method: "HEAD" });
+    const imageCache = imageResponse.headers.get("cache-control") || "";
+    if (!imageCache.includes("max-age=31536000") || !imageCache.includes("immutable")) {
+      throw new Error(`Uploaded images should be strongly cached, got: ${imageCache}.`);
+    }
     const uploadedVideo = uploadedPaths.find(isVideoPath);
     if (!uploadedVideo) throw new Error("Uploaded video was not saved with the project.");
     const rangeResponse = await fetch(`${baseUrl}/${uploadedVideo}`, { headers: { range: "bytes=0-31" } });
     if (rangeResponse.status !== 206) throw new Error(`Video uploads should support range playback, got HTTP ${rangeResponse.status}.`);
-    for (const src of uploadedPaths) uploadedFilesToClean.add(path.join(process.cwd(), src));
+    const videoCache = rangeResponse.headers.get("cache-control") || "";
+    if (!videoCache.includes("max-age=31536000") || !videoCache.includes("immutable")) {
+      throw new Error(`Uploaded videos should be strongly cached, got: ${videoCache}.`);
+    }
+    const allUploadedPaths = [...new Set([
+      ...uploadedPaths,
+      ...uploadedPaths.map((src) => uploadState.mediaVariants[src]).filter(Boolean)
+    ])];
+    for (const src of allUploadedPaths) uploadedFilesToClean.add(path.join(process.cwd(), src));
 
     await page.goto(`${baseUrl}/#project/playwright-test-house`, { waitUntil: "networkidle" });
     await waitForApp(page);
+    const lightboxSource = await page.locator(".project-image-flow img[data-lightbox-src]").first().getAttribute("data-lightbox-src");
+    if (lightboxSource !== fullSizeImage) {
+      throw new Error(`Project lightbox should use the full-size source. Expected ${fullSizeImage}, got ${lightboxSource}.`);
+    }
     const optionalProjectText = await page.locator(".project-facts, .meta-list").allTextContents();
     const joinedProjectText = optionalProjectText.join("\n");
     for (const hiddenLabel of ["Scope of work:", "Year", "Status", "Category", "Role", "Area"]) {
@@ -698,8 +762,9 @@ function isVideoPath(src = "") {
 
     await page.goto(`${baseUrl}/#home`, { waitUntil: "networkidle" });
     await waitForApp(page);
+    await page.locator(".minimal-gallery").waitFor({ state: "visible", timeout: 5000 });
     await visibleText(page, "Playwright Test House");
-    const cards = await page.locator(".project-card").count();
+    const cards = await page.locator(".minimal-gallery .project-card").count();
     if (cards !== expectedProjects) throw new Error(`Expected ${expectedProjects} project cards, found ${cards}.`);
 
     await page.goto(`${baseUrl}/#admin`, { waitUntil: "networkidle" });
@@ -709,7 +774,7 @@ function isVideoPath(src = "") {
     await visibleText(page, "Confirm Action");
     await page.locator(".confirm-dialog [data-confirm-ok]").click();
     await visibleText(page, "Project deleted");
-    await waitForPathsRemoved(uploadedPaths);
+    await waitForPathsRemoved(allUploadedPaths);
   });
 
   await page.close();

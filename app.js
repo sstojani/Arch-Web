@@ -4,6 +4,8 @@ let adminAuthenticated = false;
 let serverStateExists = false;
 let legacyStatePendingMigration = false;
 let stateSaveQueue = Promise.resolve();
+const uploadImageMaxDimension = 2000;
+const uploadImageQuality = 0.82;
 
 const imageBank = [
   "assets/project-courtyard.png",
@@ -140,7 +142,8 @@ const seedState = {
       media: [imageBank[3], imageBank[4], imageBank[0]]
     }
   ],
-  mediaItems: []
+  mediaItems: [],
+  mediaVariants: {}
 };
 
 let state = structuredClone(seedState);
@@ -288,7 +291,8 @@ function normalizeStoredState(input) {
     settings: { ...base.settings, ...(input.settings || {}) },
     services: Array.isArray(input.services) ? input.services : base.services,
     projects: Array.isArray(input.projects) ? input.projects : base.projects,
-    mediaItems: Array.isArray(input.mediaItems) ? input.mediaItems : []
+    mediaItems: Array.isArray(input.mediaItems) ? input.mediaItems : [],
+    mediaVariants: {}
   };
 
   next.projects = next.projects.map((project, index) => ({
@@ -297,6 +301,15 @@ function normalizeStoredState(input) {
     backgroundMedia: isBrowserStoredMedia(project.backgroundMedia) ? "" : (project.backgroundMedia || ""),
     media: splitMediaSources(project.media || []).filter((src) => !isBrowserStoredMedia(src))
   }));
+  const displayedMedia = new Set(next.projects.flatMap((project) =>
+    [project.cover, project.backgroundMedia, ...(project.media || [])].filter(Boolean)
+  ));
+  Object.entries(input.mediaVariants || {}).forEach(([displaySrc, fullSrc]) => {
+    const display = String(displaySrc || "").trim();
+    const full = String(fullSrc || "").trim();
+    if (!display || !full || isBrowserStoredMedia(display) || isBrowserStoredMedia(full)) return;
+    if (displayedMedia.has(display)) next.mediaVariants[display] = full;
+  });
   next.mediaItems = next.mediaItems.filter((item) => item && !isBrowserStoredMedia(item.src));
   return next;
 }
@@ -827,9 +840,13 @@ function handleProjectUpload(inputNode) {
     return;
   }
 
-  uploadFilesToAssets(files).then((uploaded) => {
+  showToast("Preparing media...");
+  uploadPreparedFiles(files).then((uploaded) => {
     const sources = uploaded.map((file) => file.path);
-    sources.forEach((src) => pendingProjectUploads.add(src));
+    uploaded.forEach((file) => {
+      pendingProjectUploads.add(file.path);
+      if (file.fullPath && file.fullPath !== file.path) pendingProjectUploads.add(file.fullPath);
+    });
     if (inputNode.multiple) {
       const existing = splitMediaSources(target.value);
       target.value = uniqueMediaList([...existing.filter((src) => !isDemoMedia(src)), ...sources]).join("\n");
@@ -863,6 +880,86 @@ async function uploadFilesToAssets(files) {
     throw new Error("No supported media files were uploaded.");
   }
   return data.files;
+}
+
+async function uploadPreparedFiles(files) {
+  const uploaded = [];
+  for (const file of files) {
+    const prepared = await prepareUploadFile(file);
+    const [display] = await uploadFilesToAssets([prepared.displayFile]);
+    let fullPath = display.path;
+    if (prepared.fullFile) {
+      const [full] = await uploadFilesToAssets([prepared.fullFile]);
+      fullPath = full.path;
+    }
+    rememberMediaVariant(display.path, fullPath);
+    uploaded.push({ ...display, fullPath });
+  }
+  return uploaded;
+}
+
+async function prepareUploadFile(file) {
+  if (!shouldOptimizeImageUpload(file)) return { displayFile: file, fullFile: null };
+  try {
+    const optimized = await createOptimizedImageBlob(file);
+    if (!optimized || optimized.size >= file.size) return { displayFile: file, fullFile: null };
+    const displayFile = new File([optimized], optimizedImageName(file.name, optimized.type), {
+      type: optimized.type,
+      lastModified: Date.now()
+    });
+    return { displayFile, fullFile: file };
+  } catch (error) {
+    console.warn("Image optimization skipped.", error);
+    return { displayFile: file, fullFile: null };
+  }
+}
+
+function rememberMediaVariant(displaySrc, fullSrc) {
+  if (!state.mediaVariants) state.mediaVariants = {};
+  if (!displaySrc || !fullSrc || displaySrc === fullSrc) return;
+  state.mediaVariants[displaySrc] = fullSrc;
+}
+
+function shouldOptimizeImageUpload(file) {
+  return file.type.startsWith("image/") && !["image/gif", "image/svg+xml", "image/avif"].includes(file.type);
+}
+
+async function createOptimizedImageBlob(file) {
+  const image = await loadImageFile(file);
+  const scale = Math.min(1, uploadImageMaxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext("2d", { alpha: true });
+  if (!context) return null;
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return await canvasToBlob(canvas, "image/webp", uploadImageQuality) ||
+    await canvasToBlob(canvas, "image/jpeg", uploadImageQuality);
+}
+
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not read image for optimization."));
+    };
+    image.src = url;
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+function optimizedImageName(name, type) {
+  const ext = type === "image/webp" ? ".webp" : ".jpg";
+  return `${name.replace(/\.[^.]+$/, "") || "image"}-optimized${ext}`;
 }
 
 function saveContent(event) {
@@ -903,13 +1000,13 @@ function moveProject(id, direction) {
   renderAdmin();
 }
 
-function projectCard(project) {
+function projectCard(project, index = 0) {
   const images = project.cover ? [project.cover].filter((src) => isImageSrc(src) || isVideoSrc(src)) : [];
   const tagItems = [project.category, project.location].map(cleanOptionalValue).filter(Boolean);
   return `
     <a class="project-card" href="#project/${project.slug}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
       <figure class="project-cover ${images.length ? "" : "is-placeholder-only"}">
-        ${projectImageMarkup(project, images)}
+        ${projectImageMarkup(project, images, "", { eager: index < 3, highPriority: index === 0 })}
       </figure>
       <div class="project-meta">
         <div>
@@ -971,7 +1068,7 @@ function adminProjectCard(project, index) {
   ].filter(Boolean);
   return `
     <article class="admin-card project-card">
-      <img src="${project.cover}" alt="${escapeHtml(project.title)} thumbnail">
+      <img src="${project.cover}" alt="${escapeHtml(project.title)} thumbnail" loading="lazy" decoding="async">
       <div>
         <h3>${escapeHtml(project.title)}</h3>
         <p class="micro">${escapeHtml(statusItems.join(" · "))}</p>
@@ -1021,22 +1118,23 @@ function mediaPreview(src, index = 0, sourceName = "") {
     : "";
   if (isVideoSrc(src)) return `<span class="upload-preview-item media-preview-frame"><video src="${escapeAttr(src)}" controls muted playsinline preload="metadata"></video>${removeButton}</span>`;
   if (isImageSrc(src)) {
-    return `<span class="upload-preview-item media-preview-frame"><img src="${escapeAttr(src)}" alt="Selected media ${index + 1}" data-media-fallback><span class="media-fallback">Media unavailable</span>${removeButton}</span>`;
+    return `<span class="upload-preview-item media-preview-frame"><img src="${escapeAttr(src)}" alt="Selected media ${index + 1}" loading="lazy" decoding="async" data-media-fallback><span class="media-fallback">Media unavailable</span>${removeButton}</span>`;
   }
   if (isPdfSrc(src)) return `<span class="upload-preview-item media-preview-frame">PDF ${index + 1}${removeButton}</span>`;
   return `<span class="upload-preview-item media-preview-frame">${escapeHtml(src.slice(0, 80))}${removeButton}</span>`;
 }
 
-function projectImageMarkup(project, images, speed = "") {
+function projectImageMarkup(project, images, speed = "", options = {}) {
   if (!images.length) return `<span class="cover-placeholder" aria-hidden="true"></span>`;
   return images.map((src, imageIndex) => {
     const speedAttr = speed ? ` data-speed="${speed}"` : "";
     const fallbackSrc = imageBank[imageIndex % imageBank.length];
-    const loading = imageIndex === 0 ? "eager" : "lazy";
+    const loading = options.eager && imageIndex === 0 ? "eager" : "lazy";
+    const priority = options.highPriority && imageIndex === 0 ? "high" : "low";
     if (isVideoSrc(src)) {
       return `<video class="carousel-image ${imageIndex === 0 ? "active" : ""}"${speedAttr} src="${escapeAttr(src)}" muted playsinline loop preload="metadata" aria-label="${escapeHtml(project.title)} project video ${imageIndex + 1}"></video>`;
     }
-    return `<img class="carousel-image ${imageIndex === 0 ? "active" : ""}"${speedAttr} src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} project thumbnail ${imageIndex + 1}" loading="${loading}" decoding="async" data-fallback-src="${escapeAttr(fallbackSrc)}">`;
+    return `<img class="carousel-image ${imageIndex === 0 ? "active" : ""}"${speedAttr} src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} project thumbnail ${imageIndex + 1}" loading="${loading}" decoding="async" fetchpriority="${priority}" data-fallback-src="${escapeAttr(fallbackSrc)}">`;
   }).join("");
 }
 
@@ -1054,7 +1152,8 @@ function projectImages(project) {
 
 function collectProjectMedia(project) {
   if (!project) return [];
-  return uniqueMediaList([project.cover, project.backgroundMedia, ...(project.media || [])]);
+  const displayed = uniqueMediaList([project.cover, project.backgroundMedia, ...(project.media || [])]);
+  return uniqueMediaList([...displayed, ...displayed.map(fullQualityMediaSrc)]);
 }
 
 function referencedProjectMedia() {
@@ -1067,6 +1166,7 @@ function cleanupUploadedFiles(candidates) {
     .filter(isUploadedAsset)
     .filter((src) => !stillUsed.has(src));
   if (!paths.length) return;
+  forgetMediaVariants(paths);
 
   stateSaveQueue = stateSaveQueue
     .then(() => deleteUploadedFiles(paths))
@@ -1074,6 +1174,14 @@ function cleanupUploadedFiles(candidates) {
       console.error(error);
       showToast(error.message || "Could not delete unused uploaded files.");
     });
+}
+
+function forgetMediaVariants(paths) {
+  if (!state.mediaVariants) return;
+  const deleting = new Set(paths);
+  Object.entries(state.mediaVariants).forEach(([displaySrc, fullSrc]) => {
+    if (deleting.has(displaySrc) || deleting.has(fullSrc)) delete state.mediaVariants[displaySrc];
+  });
 }
 
 function discardPendingProjectUploads() {
@@ -1152,7 +1260,7 @@ function projectMediaFlow(project) {
     if (isVideoSrc(src)) {
       return `<figure class="${itemClass}"><video src="${escapeAttr(src)}" autoplay muted loop playsinline preload="metadata" tabindex="-1" data-ambient-video aria-label="${escapeHtml(project.title)} video ${index + 1}"></video></figure>`;
     }
-    return `<figure class="${itemClass}"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} image ${index + 1}" loading="${index === 0 ? "eager" : "lazy"}" decoding="async" data-media-fallback data-fallback-src="${escapeAttr(fallbackSrc)}"${lightboxAttrs(project, src, `image ${index + 1}`)}></figure>`;
+    return `<figure class="${itemClass}"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} image ${index + 1}" loading="${index === 0 ? "eager" : "lazy"}" decoding="async" fetchpriority="${index === 0 ? "high" : "low"}" data-media-fallback data-fallback-src="${escapeAttr(fallbackSrc)}"${lightboxAttrs(project, src, `image ${index + 1}`)}></figure>`;
   }).join("");
 }
 
@@ -1164,7 +1272,7 @@ function projectGallery(project) {
       return `<figure class="gallery-item"><video src="${escapeAttr(src)}" controls muted playsinline preload="metadata" aria-label="${escapeHtml(project.title)} video ${index + 1}"></video></figure>`;
     }
     if (isImageSrc(src)) {
-      return `<figure class="gallery-item"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} gallery image ${index + 1}" data-media-fallback data-fallback-src="${escapeAttr(fallbackSrc)}"${lightboxAttrs(project, src, `gallery image ${index + 1}`)}></figure>`;
+      return `<figure class="gallery-item"><img src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} gallery image ${index + 1}" loading="lazy" decoding="async" fetchpriority="low" data-media-fallback data-fallback-src="${escapeAttr(fallbackSrc)}"${lightboxAttrs(project, src, `gallery image ${index + 1}`)}></figure>`;
     }
     return `<figure class="gallery-item gallery-file"><a class="button ghost" href="${escapeAttr(src)}" target="_blank" rel="noreferrer">Open media ${index + 1}</a></figure>`;
   }).join("");
@@ -1175,7 +1283,7 @@ function projectCoverMedia(project) {
   if (isVideoSrc(project.cover)) {
     return `<video class="parallax-media" src="${escapeAttr(project.cover)}" controls muted playsinline preload="metadata" aria-label="${escapeHtml(project.title)} hero video"></video>`;
   }
-  return `<img class="parallax-media" src="${escapeAttr(project.cover)}" alt="${escapeHtml(project.title)} hero image" data-media-fallback data-fallback-src="${escapeAttr(imageBank[0])}">${fallback}`;
+  return `<img class="parallax-media" src="${escapeAttr(project.cover)}" alt="${escapeHtml(project.title)} hero image" loading="eager" decoding="async" fetchpriority="high" data-media-fallback data-fallback-src="${escapeAttr(imageBank[0])}">${fallback}`;
 }
 
 function projectShowcaseMedia(project) {
@@ -1188,14 +1296,18 @@ function projectShowcaseMedia(project) {
     return `<video class="parallax-media ambient-video" src="${escapeAttr(src)}" autoplay muted loop playsinline preload="metadata" tabindex="-1" data-ambient-video aria-label="${escapeHtml(project.title)} background video"></video>`;
   }
   if (isImageSrc(src)) {
-    return `<img class="parallax-media" src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} background media" data-media-fallback>${fallback}`;
+    return `<img class="parallax-media" src="${escapeAttr(src)}" alt="${escapeHtml(project.title)} background media" loading="lazy" decoding="async" fetchpriority="low" data-media-fallback>${fallback}`;
   }
   return `<span class="media-fallback detail-fallback is-visible">Background media unavailable</span>`;
 }
 
 function lightboxAttrs(project, src, label = "image") {
   const meta = [project.category, project.location, project.year].filter(Boolean).join(" / ");
-  return ` data-lightbox-src="${escapeAttr(src)}" data-lightbox-title="${escapeAttr(project.title)}" data-lightbox-details="${escapeAttr(project.summary || "")}" data-lightbox-meta="${escapeAttr(meta)}" role="button" tabindex="0" aria-label="Open ${escapeAttr(project.title)} ${escapeAttr(label)} in image viewer"`;
+  return ` data-lightbox-src="${escapeAttr(fullQualityMediaSrc(src))}" data-lightbox-title="${escapeAttr(project.title)}" data-lightbox-details="${escapeAttr(project.summary || "")}" data-lightbox-meta="${escapeAttr(meta)}" role="button" tabindex="0" aria-label="Open ${escapeAttr(project.title)} ${escapeAttr(label)} in image viewer"`;
+}
+
+function fullQualityMediaSrc(src = "") {
+  return state.mediaVariants?.[src] || src;
 }
 
 function isImageSrc(src = "") {

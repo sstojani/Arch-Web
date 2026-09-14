@@ -24,6 +24,7 @@ const types = {
   ".svg": "image/svg+xml",
   ".webp": "image/webp",
   ".avif": "image/avif",
+  ".bmp": "image/bmp",
   ".mp4": "video/mp4",
   ".m4v": "video/mp4",
   ".webm": "video/webm",
@@ -35,6 +36,7 @@ const types = {
 
 const uploadExtensions = new Set([
   ".avif",
+  ".bmp",
   ".gif",
   ".jpeg",
   ".jpg",
@@ -216,9 +218,10 @@ async function serveStatic(request, response) {
   try {
     const type = types[path.extname(filePath).toLowerCase()] || "application/octet-stream";
     const stats = await fs.stat(filePath);
+    const cacheControl = staticCacheControl(requestedPath, type);
 
     if (request.headers.range && type.startsWith("video/")) {
-      serveRange(request, response, filePath, stats.size, type);
+      serveRange(request, response, filePath, stats.size, type, cacheControl);
       return;
     }
 
@@ -231,7 +234,7 @@ async function serveStatic(request, response) {
         "content-type": type,
         "content-length": stats.size,
         ...(type.startsWith("video/") ? { "accept-ranges": "bytes" } : {}),
-        "cache-control": "no-store"
+        "cache-control": cacheControl
       }
     );
   } catch {
@@ -239,7 +242,17 @@ async function serveStatic(request, response) {
   }
 }
 
-function serveRange(request, response, filePath, size, type) {
+function staticCacheControl(requestedPath, type) {
+  if (requestedPath.startsWith("/assets/uploads/") && /^(image|video)\//.test(type)) {
+    return "public, max-age=31536000, immutable";
+  }
+  if (requestedPath.startsWith("/assets/") && /^(image|video)\//.test(type)) {
+    return "public, max-age=604800";
+  }
+  return "no-cache";
+}
+
+function serveRange(request, response, filePath, size, type, cacheControl = "no-cache") {
   const range = String(request.headers.range || "");
   const match = range.match(/^bytes=(\d*)-(\d*)$/);
   if (!match) {
@@ -264,7 +277,7 @@ function serveRange(request, response, filePath, size, type) {
     "content-length": boundedEnd - start + 1,
     "content-range": `bytes ${start}-${boundedEnd}/${size}`,
     "accept-ranges": "bytes",
-    "cache-control": "no-store"
+    "cache-control": cacheControl
   });
 
   if (request.method === "HEAD") {
