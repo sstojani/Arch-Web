@@ -420,6 +420,7 @@ async function assertMobileNavigation(page) {
 
 async function assertMobileGridIsImageOnly(page) {
   const grid = await page.evaluate(() => {
+    const images = [...document.querySelectorAll(".project-grid img")];
     const meta = [...document.querySelectorAll(".project-card .project-meta")].map((node) => ({
       display: getComputedStyle(node).display,
       height: Math.round(node.getBoundingClientRect().height)
@@ -427,11 +428,16 @@ async function assertMobileGridIsImageOnly(page) {
     return {
       gap: getComputedStyle(document.querySelector(".project-grid")).gap,
       meta,
-      cards: document.querySelectorAll(".project-card").length
+      cards: document.querySelectorAll(".project-card").length,
+      eagerImages: images.filter((image) => image.loading === "eager").length,
+      highPriorityImages: images.filter((image) => image.getAttribute("fetchpriority") === "high").length
     };
   });
   if (grid.cards < 1) throw new Error("Expected mobile project cards to render.");
   if (parseFloat(grid.gap) < 15) throw new Error(`Mobile project images should have at least 15px background separators, got ${grid.gap}.`);
+  if (grid.eagerImages !== 1 || grid.highPriorityImages !== 1) {
+    throw new Error(`Mobile project grid should prioritize only the first visible image: ${JSON.stringify(grid)}.`);
+  }
   if (grid.meta.some((item) => item.display !== "none" || item.height !== 0)) {
     throw new Error(`Mobile project captions should be hidden in the image grid: ${JSON.stringify(grid)}.`);
   }

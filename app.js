@@ -4,8 +4,8 @@ let adminAuthenticated = false;
 let serverStateExists = false;
 let legacyStatePendingMigration = false;
 let stateSaveQueue = Promise.resolve();
-const uploadImageMaxDimension = 2000;
-const uploadImageQuality = 0.82;
+const uploadImageMaxDimension = 1600;
+const uploadImageQuality = 0.76;
 
 const imageBank = [
   "assets/project-courtyard.png",
@@ -158,6 +158,8 @@ let immersiveCleanup = null;
 let ambientVideoCleanup = null;
 let workIntroFadeCleanup = null;
 let imageLightboxCleanup = null;
+let lightboxPreloadCleanup = null;
+const warmedLightboxSources = new Set();
 
 const main = document.querySelector("#main");
 const toast = document.querySelector(".toast");
@@ -368,10 +370,12 @@ function setActiveNav(name) {
 
 function page(content) {
   closeImageLightbox();
+  if (lightboxPreloadCleanup) lightboxPreloadCleanup();
   main.innerHTML = `<div class="page">${content}</div>`;
   main.focus({ preventScroll: true });
   bindMediaFallbacks(main);
   bindImageLightbox(main);
+  bindLightboxPreloading(main);
   bindWorkIntroFade();
   bindAmbientVideos();
   bindContactForm();
@@ -1036,7 +1040,7 @@ function projectCard(project, index = 0) {
   return `
     <a class="project-card" href="${projectHref(project, projects)}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
       <figure class="project-cover ${images.length ? "" : "is-placeholder-only"}">
-        ${projectImageMarkup(project, images, "", { eager: index < 3, highPriority: index === 0 })}
+        ${projectImageMarkup(project, images, "", { eager: index === 0, highPriority: index === 0 })}
       </figure>
       <div class="project-meta">
         <div>
@@ -1854,6 +1858,60 @@ function bindWorkIntroFade() {
   };
 }
 
+function scheduleLightboxPreload(src) {
+  const source = String(src || "").trim();
+  if (!source || warmedLightboxSources.has(source) || !isImageSrc(source)) return;
+  warmedLightboxSources.add(source);
+
+  const preload = () => {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = source;
+  };
+
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(preload, { timeout: 1200 });
+  } else {
+    window.setTimeout(preload, 120);
+  }
+}
+
+function preloadLightboxNeighbors(images, index) {
+  if (!images.length || index < 0) return;
+  [index, index + 1, index - 1].forEach((position) => {
+    const image = images[(position + images.length) % images.length];
+    scheduleLightboxPreload(image?.dataset.lightboxSrc || image?.src);
+  });
+}
+
+function bindLightboxPreloading(root = document) {
+  const images = [...root.querySelectorAll(".project-image-flow img[data-lightbox-src]")];
+  if (!images.length) return;
+
+  if (!("IntersectionObserver" in window)) {
+    images.slice(0, 2).forEach((image, index) => {
+      window.setTimeout(() => preloadLightboxNeighbors(images, index), 250 + index * 150);
+    });
+    return;
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      preloadLightboxNeighbors(images, images.indexOf(entry.target));
+      observer.unobserve(entry.target);
+    });
+  }, {
+    rootMargin: window.matchMedia("(max-width: 700px)").matches ? "650px 0px" : "1000px 0px"
+  });
+
+  images.forEach((image) => observer.observe(image));
+  lightboxPreloadCleanup = () => {
+    observer.disconnect();
+    lightboxPreloadCleanup = null;
+  };
+}
+
 function bindImageLightbox(root = document) {
   root.querySelectorAll("img[data-lightbox-src]").forEach((image) => {
     if (image.dataset.lightboxBound) return;
@@ -1922,11 +1980,18 @@ function openImageLightbox(images, startIndex = 0) {
     node.alt = `${item.title} full screen image`;
   };
 
+  const preloadAroundCurrentImage = () => {
+    [currentIndex + 1, currentIndex - 1].forEach((position) => {
+      scheduleLightboxPreload(galleryImages[(position + galleryImages.length) % galleryImages.length]?.src);
+    });
+  };
+
   const showImage = (index, direction = 0) => {
     const nextIndex = (index + galleryImages.length) % galleryImages.length;
     if (!direction || nextIndex === currentIndex) {
       currentIndex = nextIndex;
       applyImage(image, galleryImages[currentIndex]);
+      preloadAroundCurrentImage();
       previousButton.hidden = galleryImages.length < 2;
       nextButton.hidden = galleryImages.length < 2;
       return;
@@ -1955,6 +2020,7 @@ function openImageLightbox(images, startIndex = 0) {
       image = incoming;
       currentIndex = nextIndex;
       isAnimating = false;
+      preloadAroundCurrentImage();
     }, 430);
     previousButton.hidden = galleryImages.length < 2;
     nextButton.hidden = galleryImages.length < 2;
