@@ -416,7 +416,7 @@ function renderWork() {
 }
 
 function renderProject(slug) {
-  const project = publishedProjects().find((item) => item.slug === slug) || publishedProjects()[0];
+  const project = findProjectByRouteKey(slug);
   if (!project) {
     page(emptyState("No published project is available yet."));
     return;
@@ -1000,11 +1000,41 @@ function moveProject(id, direction) {
   renderAdmin();
 }
 
+function projectRouteBase(project) {
+  return slugify(project.title || "") || cleanOptionalValue(project.slug) || cleanOptionalValue(project.id) || "project";
+}
+
+function projectRouteKey(project, projects = publishedProjects()) {
+  const base = projectRouteBase(project);
+  const sameBaseCount = projects.filter((item) => projectRouteBase(item) === base).length;
+  const id = cleanOptionalValue(project.id);
+  return sameBaseCount > 1 && id ? `${base}--${id}` : base;
+}
+
+function projectHref(project, projects = publishedProjects()) {
+  return `#project/${encodeURIComponent(projectRouteKey(project, projects))}`;
+}
+
+function cleanRouteKey(value = "") {
+  return decodeURIComponent(String(value || "").trim().replace(/^#?project\//, ""));
+}
+
+function findProjectByRouteKey(value) {
+  const projects = publishedProjects();
+  const routeKey = cleanRouteKey(value);
+  if (!routeKey) return projects[0];
+  return projects.find((project) => projectRouteKey(project, projects) === routeKey)
+    || projects.find((project) => cleanOptionalValue(project.id) === routeKey)
+    || projects.find((project) => projectRouteBase(project) === routeKey)
+    || projects[0];
+}
+
 function projectCard(project, index = 0) {
+  const projects = publishedProjects();
   const images = project.cover ? [project.cover].filter((src) => isImageSrc(src) || isVideoSrc(src)) : [];
   const tagItems = [project.category, project.location].map(cleanOptionalValue).filter(Boolean);
   return `
-    <a class="project-card" href="#project/${project.slug}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
+    <a class="project-card" href="${projectHref(project, projects)}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
       <figure class="project-cover ${images.length ? "" : "is-placeholder-only"}">
         ${projectImageMarkup(project, images, "", { eager: index < 3, highPriority: index === 0 })}
       </figure>
@@ -1021,10 +1051,11 @@ function projectCard(project, index = 0) {
 }
 
 function projectStoryCard(project, index, total) {
+  const projects = publishedProjects();
   const images = project.cover ? [project.cover].filter((src) => isImageSrc(src) || isVideoSrc(src)) : [];
   const tagItems = [project.category, project.location].map(cleanOptionalValue).filter(Boolean);
   return `
-    <a class="project-card story-card ${index === 0 ? "active" : ""}" href="#project/${project.slug}" data-story-card data-index="${index}" data-total="${total}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
+    <a class="project-card story-card ${index === 0 ? "active" : ""}" href="${projectHref(project, projects)}" data-story-card data-index="${index}" data-total="${total}" data-title="${escapeAttr(project.title)}" data-summary="${escapeAttr(project.summary)}" data-category="${escapeAttr(project.category)}" data-location="${escapeAttr(project.location)}" data-year="${escapeAttr(project.year)}">
       <figure class="project-cover cinematic-cover ${images.length ? "" : "is-placeholder-only"}">
         <span class="story-number" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span>
         <span class="cover-plate plate-a" data-speed="0.34" aria-hidden="true"></span>

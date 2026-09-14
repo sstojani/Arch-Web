@@ -701,7 +701,7 @@ function createTestImageFile() {
     const expectedProjects = (await portfolioState(page)).projects.filter((item) => item.published).length + 1;
     await page.getByRole("button", { name: "New Project" }).click();
     await page.locator("#title").fill("Playwright Test House");
-    await page.locator("#slug").fill("playwright-test-house");
+    await page.locator("#slug").fill("courtyard-house");
     await page.locator("#location").fill("Test City");
     await page.locator("[data-project-upload='#cover']").setInputFiles(createTestImageFile());
     await page.waitForFunction(() => document.querySelector("#cover")?.value.startsWith("assets/uploads/"));
@@ -746,8 +746,20 @@ function createTestImageFile() {
     ])];
     for (const src of allUploadedPaths) uploadedFilesToClean.add(path.join(process.cwd(), src));
 
-    await page.goto(`${baseUrl}/#project/playwright-test-house`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#work`, { waitUntil: "networkidle" });
     await waitForApp(page);
+    const testProjectHref = await page.locator(".project-grid a.project-card", { hasText: "Playwright Test House" }).first().getAttribute("href");
+    if (!testProjectHref) throw new Error("New project card did not receive a route.");
+    if (testProjectHref === "#project/courtyard-house") {
+      throw new Error("Duplicate project slug should receive a unique route key.");
+    }
+    if (!testProjectHref.includes("playwright-test-house")) {
+      throw new Error(`Project card should use the project title for its visible route, got ${testProjectHref}.`);
+    }
+
+    await page.goto(`${baseUrl}/${testProjectHref}`, { waitUntil: "networkidle" });
+    await waitForApp(page);
+    await visibleText(page, "Playwright Test House");
     const lightboxSource = await page.locator(".project-image-flow img[data-lightbox-src]").first().getAttribute("data-lightbox-src");
     if (lightboxSource !== fullSizeImage) {
       throw new Error(`Project lightbox should use the full-size source. Expected ${fullSizeImage}, got ${lightboxSource}.`);
